@@ -67,7 +67,8 @@ class simulation_parameters:
 		self.production_run = True  # whether this is just to test initialisation
 
 		# stage 01: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions
-		self.stage = 1
+		# stage 02: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions. DBulk instead of DInt.
+		self.stage = 2
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -101,7 +102,7 @@ loop_params = simulation_parameters()
 loop_params.mat_1.exchange = [11.36]
 loop_params.mat_1.dmi = [1.99]
 loop_params.skyrmion_size = [50] # in nm
-loop_params.skyrmion_type = [SkyrmionType.bloch, SkyrmionType.neel]
+loop_params.skyrmion_type = [SkyrmionType.bloch]
 loop_params.external_Bfield = [0.0]
 
 
@@ -231,7 +232,8 @@ def writting_mx3(sim_param):
 	alpha = Damping
 	Aex	= Exchange
 	//Msat  = Mag
-	Dind  = D	  //	Dbulk  = D
+	//Dind  = D
+	Dbulk  = D
 	//Ku1	= K1
 
 	//m = randomMagSeed(0)
