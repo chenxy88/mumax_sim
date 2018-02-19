@@ -64,11 +64,10 @@ class simulation_parameters:
 		self.grid_size = params_3d(512, 512, self.grid_size_z)  # number of cells in simulation, should be power of 2
 		self.mesh_cell_size = None
 
-		self.production_run = True  # whether this is just to test initialisation
-
 		# stage 01: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions
 		# stage 02: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions. DBulk instead of DInt.
-		self.stage = 2
+		# stage 03: Setting DBulk only without setting DInt produced the runtime error "DMI: Msat, Aex, Dex must be uniform". Try setting DInt to zero. Also, streamlined the code to remove unnecessary material region definitions.
+		self.stage = 3
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -83,6 +82,7 @@ class simulation_parameters:
 		self.exception_f = ''
 		self.mumax_file = ''
 		self.sh_file = ''
+		self.production_run = not os.path.isfile('./not_production_run.txt') # this will be set automatically by checking if file not_production_run.txt exist in current dir
 
 		self.update_sim_params()
 
@@ -168,7 +168,7 @@ def writting_mx3(sim_param):
 		//saveas(geom, "stack_geom")
 	""" % (geometry_single_layer_cuboid))
 
-	M0_layers_alternate = dedent("""
+	magnetic_layers = dedent("""
 	nx_sk_per_side:= %.0f
 	ny_sk_per_side:= %.0f
 	sk_spacing_x := %f*Nano
@@ -176,16 +176,15 @@ def writting_mx3(sim_param):
 	sk_scale := %f
 	sk_chirality := %d
 
-	DefRegion(1, cuboid(size_X*Nano, size_Y*Nano, size_Z*Nano))
 	m = uniform(0, 0, 1)
 	xpos:= 0.0
 	ypos:= 0.0
-	//Here comes the skyrmions
 	""" % (sim_param.num_sk_per_side.x, sim_param.num_sk_per_side.y, sim_param.sk_spacing.x, sim_param.sk_spacing.y, sim_param.skyrmion_scaling_factor, sim_param.skyrmion_chirality))
 	
+	# insert skyrmions
 	for i in range(0,sim_param.num_sk_per_side.x):
 		for j in range(0,sim_param.num_sk_per_side.y):
-			M0_layers_alternate = M0_layers_alternate + dedent("""
+			magnetic_layers = magnetic_layers + dedent("""
 				//Here comes the skyrmions
 				xpos= %f*Nano
 				ypos= %f*Nano
@@ -193,17 +192,17 @@ def writting_mx3(sim_param):
 			""" %(((sim_param.num_sk_per_side.x-1)/2-i)*sim_param.sk_spacing.x+sim_param.skyrmion_rand_pos_delta.x*(rand.random()*2-1), ((sim_param.num_sk_per_side.y-1)/2-j)*sim_param.sk_spacing.y+sim_param.skyrmion_rand_pos_delta.y*(rand.random()*2-1), sim_param.skyrmion_type))
 
 	mumax_commands = dedent("""
-
 	Mega :=1e6
 	Pico :=1e-12
 	Nano :=1e-9
 	Mili :=1e-3
 
-	Damping  :=%f		 //
-	Exchange :=%f*Pico  // in J/m^3
-	Mag		:=%f*Mega  // in A/m
-	D		  :=%f*Mili  // in J/m^2
-	K1		 :=%f*Mega  // in J/m^3
+	alpha  =%f		 // Damping
+	Aex = %f*Pico  // Exchange in J/m^3
+	Msat = %f*Mega  //Saturation magnetisation in A/m
+
+	D		  :=%f*Mili  //DMI in J/m^2
+	K1		 :=%f*Mega  // Anistropy in J/m^3
 	B_Max	 :=%f		 // BZ in T
 
 	size_X	:=%f //sim_param.phy_size.x
@@ -229,25 +228,12 @@ def writting_mx3(sim_param):
 
 	%s //geometry, use shape to define geometry: one big box, the same size as the simulation area
 
-	alpha = Damping
-	Aex	= Exchange
-	//Msat  = Mag
-	//Dind  = D
+	Dind  = 0
 	Dbulk  = D
-	//Ku1	= K1
+	Ku1	= K1
+	AnisU = vector(1, 0, 0) //Uniaxial anisotropy direction 
 
-	//m = randomMagSeed(0)
-
-	%s //M0_layers_alternate, M0_layers
-
-	//anisU  = vector(0, 0, 1)
-
-	Msat.SetRegion(0, 0)
-	Msat.SetRegion(1, Mag)
-	Ku1.SetRegion(0, 0)
-	Ku1.SetRegion(1, K1)
-	anisU.SetRegion(0, vector(0,0,0))
-	anisU.SetRegion(1, vector(0,0,1))
+	%s //magnetic_layers, M0_layers
 
 	B_ext = vector(0, 0, B_Max) //in mT - doh not A/m
 
@@ -256,15 +242,13 @@ def writting_mx3(sim_param):
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
 	saveas(m,"%s")
-
-
 	""" % (sim_param.mat_1.landau_damping, sim_param.mat_1.exchange, sim_param.mat_1.mag_sat, sim_param.mat_1.dmi, sim_param.mat_1.anistropy_uni, sim_param.external_Bfield, 
 		sim_param.phy_size.x, sim_param.phy_size.y,  sim_param.phy_size.z, 
 		sim_param.skyrmion_size, 
 		sim_param.grid_size.x, sim_param.grid_size.y,sim_param.grid_size.z, 
 		sim_param.pbc.x, sim_param.pbc.y, sim_param.pbc.z, 
 		sim_param.z_fm_single_thickness, sim_param.z_single_rep_thickness, sim_param.z_layer_rep_num,
-		geometry, M0_layers_alternate, sim_param.sim_name_full + '_before_relax'))
+		geometry, magnetic_layers, sim_param.sim_name_full + '_before_relax'))
 
 	if sim_param.production_run is True:
 		mumax_commands = mumax_commands + dedent("""
