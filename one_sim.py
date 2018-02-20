@@ -74,7 +74,8 @@ class simulation_parameters:
 		# stage 03: Setting DBulk only without setting DInt produced the runtime error "DMI: Msat, Aex, Dex must be uniform". Try setting DInt to zero. Also, streamlined the code to remove unnecessary material region definitions.
 		# stage 04: The previous stage produced stripes at zero field, but since they evolved from skyrmions, the number of stripes domains are limited to the number of starting skyrmions (12). The simulation space is too small and confinement effect from the square geometry, too strong. Going to increase the simulation domain to 2048*2048 nm and start with random magnetisation. RESULTS: Dense forest of stripes and skymrions of a single chirality.
 		# stage 05: Try to use experimental parameters of Co(0.8)/Pt(1)X20 of 11a, but with D = 0. RESULTS: Uniform magnetisation at 0.1 and 0.2 mT. At 0.05 mT, it is almost uniform, except for 2 domains, one of which is an antiskyrmion with a topological number of 13. Large patches of domains at 0 mT.
-		self.stage = 5
+		# stage 06: Try a small interfacial DMI of 0.1-0.2. Bulk DMI should be zero in thin-films. Small fields of 0.05 to 0.1.
+		self.stage = 6
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -106,10 +107,10 @@ class simulation_parameters:
 loop_params = simulation_parameters()
 #----------TO EDIT FOR DIFFERENT SIMULATIONS----------#
 loop_params.mat_1.exchange = [12.62]
-loop_params.mat_1.dmi = [DMI_strength(0,0)]
+loop_params.mat_1.dmi = [DMI_strength(0,0.1), DMI_strength(0,0.2)]
 loop_params.skyrmion_size = [50] # in nm
 loop_params.texture_type = [TextureType.bloch]
-loop_params.external_Bfield = [0.0, 0.05, 0.1, 0.2]
+loop_params.external_Bfield = [0.05, 0.1]
 
 
 # Write PBS script for submission to queue
@@ -301,7 +302,7 @@ def main():
 						# update sim name
 						sim_param_i.update_sim_params()
 
-						sim_param_list.append(copy.copy(sim_param_i))
+						sim_param_list.append(copy.deepcopy(sim_param_i))
 
 						loop = loop + 1
 
