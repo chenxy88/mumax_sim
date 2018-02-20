@@ -20,9 +20,14 @@ class params_3d(params_2d):
 		params_2d.__init__(self, x, y)
 		self.z = z
 
-class SkyrmionType:
-	neel = 'NeelSkyrmion'
-	bloch = 'BlochSkyrmion'
+class TextureType:
+	neel = 'Neel'
+	bloch = 'Bloch'
+
+class DMI_strength:
+	def __init__(self, bulk, interface):
+		self.bulk = bulk
+		self.interface = interface
 
 # material parameters
 class material_parameters:
@@ -30,24 +35,24 @@ class material_parameters:
 		self.landau_damping = landau_damping
 		self.mag_sat = mag_sat  # magnetisation saturation
 		self.exchange = exchange  # pJ/m
-		self.dmi = dmi  # mJ/m^2
+		self.dmi = dmi  # bulk/interfacial DMI mJ/m^2
 		self.anistropy_uni = anistropy_uni  # 1st order uniaxial anisotropy constant, MJ/m^3
 
 
 # all experimental parameters
 class simulation_parameters:
 	def __init__(self):
-		self.mat_1 = material_parameters(0.1, 1.102, 11.36, 1.99, 0.812)
-		# landau_damping, mag_sat, exchange, dmi, anistropy_uni
+		self.mat_1 = material_parameters(0.1, 1.102, 11.36, DMI_strength(0, 1.99), 0.812)
+		# landau_damping, mag_sat, exchange, (dmi_bulk, dmi_int), anistropy_uni
 
 		self.skyrmion_size = 0  # in nm, diameter of the completely in-plane magnetisation boundary
 		self.skyrmion_rand_pos_delta = params_2d(50,75)
 		self.skyrmion_scaling_factor = None
-		self.skyrmion_type = SkyrmionType.neel
+		self.texture_type = TextureType.neel
 		self.skyrmion_chirality = 1
 		self.num_sk_per_side = params_2d(4, 3)
 		self.sk_spacing = params_2d(200, 250)  # in nm
-		self.external_Bfield = 0.0
+		self.external_Bfield = 0.0 # in T
 		self.pbc = params_3d(0,0,10) #number of extra images, on both the positive and negative sides (e.g. 5 means 5 on +ve side and 5 on -ve side)
 
 		# repeat structure in z
@@ -60,14 +65,15 @@ class simulation_parameters:
 		self.phy_size_z = self.z_single_rep_thickness * self.z_layer_rep_num
 		self.grid_size_z = round(self.phy_size_z / self.cell_size_z)
 
-		self.phy_size = params_3d(1024, 1024, self.phy_size_z)  # in nm
-		self.grid_size = params_3d(512, 512, self.grid_size_z)  # number of cells in simulation, should be power of 2
+		self.phy_size = params_3d(2048, 2048, self.phy_size_z)  # in nm
+		self.grid_size = params_3d(1024, 1024, self.grid_size_z)  # number of cells in simulation, should be power of 2
 		self.mesh_cell_size = None
 
 		# stage 01: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions
 		# stage 02: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions. DBulk instead of DInt.
 		# stage 03: Setting DBulk only without setting DInt produced the runtime error "DMI: Msat, Aex, Dex must be uniform". Try setting DInt to zero. Also, streamlined the code to remove unnecessary material region definitions.
-		self.stage = 3
+		# stage 04: The previous stage produced stripes at zero field, but since they evolved from skyrmions, the number of stripes domains are limited to the number of starting skyrmions (12). The simulation space is too small and confinement effect from the square geometry, too strong. Going to increase the simulation domain to 2048*2048 nm and start with random magnetisation. RESULTS: Dense forest of stripes and skymrions of a single chirality.
+		self.stage = 4
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -75,11 +81,11 @@ class simulation_parameters:
 
 		self.walltime = '24:00:00'
 
+		# AUTO SET FIELDS
 		self.home_dir = os.path.join(os.getcwd(), self.sim_name)
 		self.working_dir = ''
 		self.results_dir_Data = ''
 		self.results_dir_Plots = ''
-		self.exception_f = ''
 		self.mumax_file = ''
 		self.sh_file = ''
 		self.production_run = not os.path.isfile('./not_production_run.txt') # this will be set automatically by checking if file not_production_run.txt exist in current dir
@@ -91,8 +97,7 @@ class simulation_parameters:
 		# 0.83255461115769769 is sqrt(ln(2))
 		self.skyrmion_scaling_factor = self.skyrmion_size/(8*self.mesh_cell_size.x)/2/0.83255461115769769
 
-		self.sim_name_full = self.sim_name + '_st_%02d_loop_%02d' %(self.stage, self.loop)
-		self.exception_f = os.path.join(self.home_dir, 'exception.txt')
+		self.sim_name_full = self.sim_name + '_st%02d_%02d' %(self.stage, self.loop)
 		self.mumax_file = os.path.join(self.home_dir, self.sim_name_full + ".mx3")
 		self.sh_file = os.path.join(self.home_dir, 'ServerGPU.sh')
 
@@ -100,17 +105,17 @@ class simulation_parameters:
 loop_params = simulation_parameters()
 #----------TO EDIT FOR DIFFERENT SIMULATIONS----------#
 loop_params.mat_1.exchange = [11.36]
-loop_params.mat_1.dmi = [1.99]
+loop_params.mat_1.dmi = [DMI_strength(1.99,0)]
 loop_params.skyrmion_size = [50] # in nm
-loop_params.skyrmion_type = [SkyrmionType.bloch]
-loop_params.external_Bfield = [0.0]
+loop_params.texture_type = [TextureType.bloch]
+loop_params.external_Bfield = [0.0, 0.01]
 
 
 # Write PBS script for submission to queue
 def writting_sh(sim_param):
 	server_script = dedent("""
 	#!/bin/bash
-	#PBS -N test0
+	#PBS -N one_sim
 	#PBS -q gpu
 	#PBS -l Walltime=%s
 	#PBS -l select=1:ncpus=24:mem=24GB
@@ -176,20 +181,12 @@ def writting_mx3(sim_param):
 	sk_scale := %f
 	sk_chirality := %d
 
-	m = uniform(0, 0, 1)
+	m = randomMag()
+	//m = uniform(0, 0, 1)
 	xpos:= 0.0
 	ypos:= 0.0
 	""" % (sim_param.num_sk_per_side.x, sim_param.num_sk_per_side.y, sim_param.sk_spacing.x, sim_param.sk_spacing.y, sim_param.skyrmion_scaling_factor, sim_param.skyrmion_chirality))
-	
-	# insert skyrmions
-	for i in range(0,sim_param.num_sk_per_side.x):
-		for j in range(0,sim_param.num_sk_per_side.y):
-			magnetic_layers = magnetic_layers + dedent("""
-				//Here comes the skyrmions
-				xpos= %f*Nano
-				ypos= %f*Nano
-				m.setInShape(cylinder(sk_size*Nano*2, size_Z*Nano).transl(xpos, ypos, 0),%s(sk_chirality, -1).scale(sk_scale, sk_scale, 1).transl(xpos, ypos, 0))
-			""" %(((sim_param.num_sk_per_side.x-1)/2-i)*sim_param.sk_spacing.x+sim_param.skyrmion_rand_pos_delta.x*(rand.random()*2-1), ((sim_param.num_sk_per_side.y-1)/2-j)*sim_param.sk_spacing.y+sim_param.skyrmion_rand_pos_delta.y*(rand.random()*2-1), sim_param.skyrmion_type))
+
 
 	mumax_commands = dedent("""
 	Mega :=1e6
@@ -201,9 +198,10 @@ def writting_mx3(sim_param):
 	Aex = %f*Pico  // Exchange in J/m^3
 	Msat = %f*Mega  //Saturation magnetisation in A/m
 
-	D		  :=%f*Mili  //DMI in J/m^2
-	K1		 :=%f*Mega  // Anistropy in J/m^3
-	B_Max	 :=%f		 // BZ in T
+	Dbulk  = %f*Mili  //Bulk DMI in J/m^2
+	Dind  = %f*Mili  //Interfacial DMI in J/m^2
+	K1	:=%f*Mega  // Anistropy in J/m^3
+	B_Max :=%f		 // BZ in T
 
 	size_X	:=%f //sim_param.phy_size.x
 	size_Y	:=%f
@@ -228,27 +226,26 @@ def writting_mx3(sim_param):
 
 	%s //geometry, use shape to define geometry: one big box, the same size as the simulation area
 
-	Dind  = 0
-	Dbulk  = D
+	
 	Ku1	= K1
-	AnisU = vector(1, 0, 0) //Uniaxial anisotropy direction 
+	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
 
 	%s //magnetic_layers, M0_layers
 
-	B_ext = vector(0, 0, B_Max) //in mT - doh not A/m
+	B_ext = vector(0, 0, B_Max) //in Teslas
 
 	TableAdd(B_ext)
 	TableAdd(E_Total)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
 	saveas(m,"%s")
-	""" % (sim_param.mat_1.landau_damping, sim_param.mat_1.exchange, sim_param.mat_1.mag_sat, sim_param.mat_1.dmi, sim_param.mat_1.anistropy_uni, sim_param.external_Bfield, 
+	""" % (sim_param.mat_1.landau_damping, sim_param.mat_1.exchange, sim_param.mat_1.mag_sat, sim_param.mat_1.dmi.bulk,  sim_param.mat_1.dmi.interface, sim_param.mat_1.anistropy_uni, sim_param.external_Bfield, 
 		sim_param.phy_size.x, sim_param.phy_size.y,  sim_param.phy_size.z, 
 		sim_param.skyrmion_size, 
 		sim_param.grid_size.x, sim_param.grid_size.y,sim_param.grid_size.z, 
 		sim_param.pbc.x, sim_param.pbc.y, sim_param.pbc.z, 
 		sim_param.z_fm_single_thickness, sim_param.z_single_rep_thickness, sim_param.z_layer_rep_num,
-		geometry, magnetic_layers, sim_param.sim_name_full + '_before_relax'))
+		geometry, magnetic_layers, sim_param.sim_name_full + '_init'))
 
 	if sim_param.production_run is True:
 		mumax_commands = mumax_commands + dedent("""
@@ -257,7 +254,7 @@ def writting_mx3(sim_param):
 			relax()			// high-energy states best minimized by relax()
 			saveas(m,"%s")
 			tablesave()
-		""" % (sim_param.sim_name_full + '_after_relax.ovf'))
+		""" % (sim_param.sim_name_full + '_relaxed.ovf'))
 
 	# defining the location of the .mx3 script
 	executable = os.path.join(sim_param.working_dir, sim_param.sim_name_full + ".mx3")
@@ -282,25 +279,22 @@ def main():
 	if not os.path.exists(sim_param_i.home_dir):
 		os.makedirs(sim_param_i.home_dir)
 
-	exception_file = open(loop_params.exception_f, 'w')
-	except_connection_list = []
 	parameter_list = []
 	working_dir_list = []
-
 
 	loop=0
 	for Ex in loop_params.mat_1.exchange:  # pJ/m
 		for D in loop_params.mat_1.dmi:
 			for B_Max in loop_params.external_Bfield:
 				for sk_size in loop_params.skyrmion_size:
-					for sk_type in loop_params.skyrmion_type:
+					for sk_type in loop_params.texture_type:
 						# set simulation params for single simulation
 						sim_param_i.mat_1.exchange = Ex
 						sim_param_i.mat_1.dmi = D
 						sim_param_i.external_Bfield = B_Max
 						sim_param_i.working_dir = sim_param_i.home_dir
 						sim_param_i.skyrmion_size = sk_size
-						sim_param_i.skyrmion_type = sk_type
+						sim_param_i.texture_type = sk_type
 						sim_param_i.loop = loop
 
 						# update sim name
