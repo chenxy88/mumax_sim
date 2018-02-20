@@ -42,7 +42,7 @@ class material_parameters:
 # all experimental parameters
 class simulation_parameters:
 	def __init__(self):
-		self.mat_1 = material_parameters(0.1, 1.102, 11.36, DMI_strength(0, 1.99), 0.812)
+		self.mat_1 = material_parameters(0.1, 0.648, 12.62, DMI_strength(0, 1.67), 0.488) #11a
 		# landau_damping, mag_sat, exchange, (dmi_bulk, dmi_int), anistropy_uni
 
 		self.skyrmion_size = 0  # in nm, diameter of the completely in-plane magnetisation boundary
@@ -73,7 +73,8 @@ class simulation_parameters:
 		# stage 02: Try to achieve a stable labyrinthine state at zero field using PBC and a starting condition of randomly placed skyrmions. DBulk instead of DInt.
 		# stage 03: Setting DBulk only without setting DInt produced the runtime error "DMI: Msat, Aex, Dex must be uniform". Try setting DInt to zero. Also, streamlined the code to remove unnecessary material region definitions.
 		# stage 04: The previous stage produced stripes at zero field, but since they evolved from skyrmions, the number of stripes domains are limited to the number of starting skyrmions (12). The simulation space is too small and confinement effect from the square geometry, too strong. Going to increase the simulation domain to 2048*2048 nm and start with random magnetisation. RESULTS: Dense forest of stripes and skymrions of a single chirality.
-		self.stage = 4
+		# stage 05: Try to use experimental parameters of Co(0.8)/Pt(1)X20 of 11a, but with D = 0. RESULTS: Uniform magnetisation at 0.1 and 0.2 mT. At 0.05 mT, it is almost uniform, except for 2 domains, one of which is an antiskyrmion with a topological number of 13. Large patches of domains at 0 mT.
+		self.stage = 5
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -104,11 +105,11 @@ class simulation_parameters:
 # parameters to loop through for a series of simulations
 loop_params = simulation_parameters()
 #----------TO EDIT FOR DIFFERENT SIMULATIONS----------#
-loop_params.mat_1.exchange = [11.36]
-loop_params.mat_1.dmi = [DMI_strength(1.99,0)]
+loop_params.mat_1.exchange = [12.62]
+loop_params.mat_1.dmi = [DMI_strength(0,0)]
 loop_params.skyrmion_size = [50] # in nm
 loop_params.texture_type = [TextureType.bloch]
-loop_params.external_Bfield = [0.0, 0.01]
+loop_params.external_Bfield = [0.0, 0.05, 0.1, 0.2]
 
 
 # Write PBS script for submission to queue
