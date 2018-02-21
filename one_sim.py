@@ -74,8 +74,9 @@ class simulation_parameters:
 		# stage 03: Setting DBulk only without setting DInt produced the runtime error "DMI: Msat, Aex, Dex must be uniform". Try setting DInt to zero. Also, streamlined the code to remove unnecessary material region definitions.
 		# stage 04: The previous stage produced stripes at zero field, but since they evolved from skyrmions, the number of stripes domains are limited to the number of starting skyrmions (12). The simulation space is too small and confinement effect from the square geometry, too strong. Going to increase the simulation domain to 2048*2048 nm and start with random magnetisation. RESULTS: Dense forest of stripes and skymrions of a single chirality.
 		# stage 05: Try to use experimental parameters of Co(0.8)/Pt(1)X20 of 11a, but with D = 0. RESULTS: Uniform magnetisation at 0.1 and 0.2 mT. At 0.05 mT, it is almost uniform, except for 2 domains, one of which is an antiskyrmion with a topological number of 13. Large patches of domains at 0 mT.
-		# stage 06: Try a small interfacial DMI of 0.1-0.2. Bulk DMI should be zero in thin-films. Small fields of 0.05 to 0.1.
-		self.stage = 6
+		# stage 06: Try a small interfacial DMI of 0.1-0.2. Bulk DMI should be zero in thin-films. Small fields of 0.05 to 0.1. 
+		# stage 07: Try smaller fields of 0.01-0.025 T and larger interfacial DMI of 0.3 to 0.8. Also set random magnetisation with starting seed. RESULTS: Mostly Neel texture that has occassional nodes or kinks of Blochness. Topologically, they are still antiskyrmions. 
+		self.stage = 7
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -107,10 +108,10 @@ class simulation_parameters:
 loop_params = simulation_parameters()
 #----------TO EDIT FOR DIFFERENT SIMULATIONS----------#
 loop_params.mat_1.exchange = [12.62]
-loop_params.mat_1.dmi = [DMI_strength(0,0.1), DMI_strength(0,0.2)]
+loop_params.mat_1.dmi = [DMI_strength(0,0.3), DMI_strength(0,0.5), DMI_strength(0,0.8)]
 loop_params.skyrmion_size = [50] # in nm
 loop_params.texture_type = [TextureType.bloch]
-loop_params.external_Bfield = [0.05, 0.1]
+loop_params.external_Bfield = [0.01, 0.025]
 
 
 # Write PBS script for submission to queue
@@ -183,11 +184,14 @@ def writting_mx3(sim_param):
 	sk_scale := %f
 	sk_chirality := %d
 
-	m = randomMag()
+	m = RandomMagSeed(%d)
 	//m = uniform(0, 0, 1)
 	xpos:= 0.0
 	ypos:= 0.0
-	""" % (sim_param.num_sk_per_side.x, sim_param.num_sk_per_side.y, sim_param.sk_spacing.x, sim_param.sk_spacing.y, sim_param.skyrmion_scaling_factor, sim_param.skyrmion_chirality))
+	""" % (sim_param.num_sk_per_side.x, sim_param.num_sk_per_side.y, 
+		sim_param.sk_spacing.x, sim_param.sk_spacing.y, 
+		sim_param.skyrmion_scaling_factor, sim_param.skyrmion_chirality,
+		rand.randrange(0,2**32)))
 
 
 	mumax_commands = dedent("""
