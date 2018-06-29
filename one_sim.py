@@ -6,6 +6,46 @@ import copy
 import numpy as np
 from textwrap import *
 import random as rand
+from dataclasses import dataclass
+
+
+def update_obj_from_dict_recursively(some_obj, some_dict):
+	"""
+	Useful to convert nested json files into nested dataclasses
+
+	Example
+	-------
+	@dataclass
+	class InputOptions:
+		path: str = None
+		n1: float = 0
+		some_thing: Opt2 = Opt2()
+
+	@dataclass
+	class Opt2:
+		some_string:str = None
+		some_num:float = 0.0
+
+	...
+
+	input_dict_list = UI_load_json_file()
+
+	...
+
+	in_opt = InputOptions()
+	update_obj_from_dict_recursively (in_opt, input_dict)
+
+	:param some_obj:
+	:param some_dict:
+	:return:
+	"""
+	for k in some_dict:
+		tmp_v = some_dict[k]
+		if isinstance(tmp_v, dict):
+			tmp_obj = some_obj.__dict__[k]
+			update_obj_from_dict_recursively(tmp_obj, tmp_v)
+		else:
+			some_obj.__dict__.update({k:tmp_v})
 
 # simulation parameters
 
@@ -38,6 +78,56 @@ class material_parameters:
 		self.dmi = dmi  # bulk/interfacial DMI mJ/m^2
 		self.anistropy_uni = anistropy_uni  # 1st order uniaxial anisotropy constant, MJ/m^3
 
+
+# all experimental parameters
+@dataclass
+class simulation_parameters:
+	mat_1 = material_parameters(0.1, 0.648, 12.62, DMI_strength(0, 1.67), 0.488)  # 11a
+	# landau_damping, mag_sat, exchange, (dmi_bulk, dmi_int), anistropy_uni
+
+	skyrmion_size = 0  # in nm, diameter of the completely in-plane magnetisation boundary
+	skyrmion_rand_pos_delta = params_2d(50, 75)
+	skyrmion_scaling_factor = None
+	texture_type = TextureType.neel
+	skyrmion_chirality = 1
+	num_sk_per_side = params_2d(4, 3)
+	sk_spacing = params_2d(200, 250)  # in nm
+	external_Bfield = 0.0  # in T
+	pbc = params_3d(0, 0, 10)  # number of extra images, on both the positive and negative sides (e.g. 5 means 5 on +ve side and 5 on -ve side)
+
+	# repeat structure in z
+	z_fm_single_thickness = 1  # in nm, equals to magnetic layer thickness
+	z_nm_single_thickness = 2  # in nm, equals to non-magnetic layer thickness
+	z_layer_rep_num = 1  # this many repeats
+
+	cell_size_z = 1  # in nm
+	z_single_rep_thickness = z_fm_single_thickness + z_nm_single_thickness  # thickness of single repetition
+	phy_size_z = z_single_rep_thickness * z_layer_rep_num
+	grid_size_z = round(phy_size_z / cell_size_z)
+
+	phy_size = params_3d(2048, 2048, phy_size_z)  # in nm
+	grid_size = params_3d(1024, 1024, grid_size_z)  # number of cells in simulation, should be power of 2
+	mesh_cell_size = None
+
+	stage = 8
+	loop = 0
+
+	sim_name = 'chens_labyrinth'
+	sim_name_full = ''
+
+	walltime = '24:00:00'
+
+	# AUTO SET FIELDS
+	home_dir = os.path.join(os.getcwd(), sim_name)
+	working_dir = ''
+	results_dir_Data = ''
+	results_dir_Plots = ''
+	mumax_file = ''
+	sh_file = ''
+	production_run = not os.path.isfile(
+		'./not_production_run.txt')  # this will be set automatically by checking if file not_production_run.txt exist in current dir
+
+	update_sim_params()
 
 # all experimental parameters
 class simulation_parameters:
@@ -76,7 +166,8 @@ class simulation_parameters:
 		# stage 05: Try to use experimental parameters of Co(0.8)/Pt(1)X20 of 11a, but with D = 0. RESULTS: Uniform magnetisation at 0.1 and 0.2 mT. At 0.05 mT, it is almost uniform, except for 2 domains, one of which is an antiskyrmion with a topological number of 13. Large patches of domains at 0 mT.
 		# stage 06: Try a small interfacial DMI of 0.1-0.2. Bulk DMI should be zero in thin-films. Small fields of 0.05 to 0.1. 
 		# stage 07: Try smaller fields of 0.01-0.025 T and larger interfacial DMI of 0.3 to 0.8. Also set random magnetisation with starting seed. RESULTS: Mostly Neel texture that has occassional nodes or kinks of Blochness. Topologically, they are still antiskyrmions. 
-		self.stage = 7
+		# stage 08: Add in a little bulk DMI to try to stabilise Bloch textures. Keep DInt at 0.5 and external field at 0.015T.
+		self.stage = 8
 		self.loop = 0
 
 		self.sim_name = 'chens_labyrinth'
@@ -108,14 +199,14 @@ class simulation_parameters:
 loop_params = simulation_parameters()
 #----------TO EDIT FOR DIFFERENT SIMULATIONS----------#
 loop_params.mat_1.exchange = [12.62]
-loop_params.mat_1.dmi = [DMI_strength(0,0.3), DMI_strength(0,0.5), DMI_strength(0,0.8)]
+loop_params.mat_1.dmi = [DMI_strength(0.25,0.5), DMI_strength(0.5,0.5), DMI_strength(0.75,0.5), DMI_strength(1,0.5), DMI_strength(1.5,0.5)]
 loop_params.skyrmion_size = [50] # in nm
 loop_params.texture_type = [TextureType.bloch]
-loop_params.external_Bfield = [0.01, 0.025]
+loop_params.external_Bfield = [0.015]
 
 
 # Write PBS script for submission to queue
-def writting_sh(sim_param):
+def writing_sh(sim_param):
 	server_script = dedent("""
 	#!/bin/bash
 	#PBS -N one_sim
@@ -316,7 +407,7 @@ def main():
 		# TODO: Add control flow variable, and move production_run to control flow
 		if sim_param_i.production_run is True:
 			# the real deal, write sh scripts
-			writting_sh(sim_param_i)
+			writing_sh(sim_param_i)
 			submit_sh(sim_param_i)
 		else:
 			run_n_convert_mumax(sim_param_i)
