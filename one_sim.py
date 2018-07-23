@@ -384,7 +384,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 def main():
 	# --- CHOOSE INPUT OPTION --- #
-	input_dict_list = load_json_file(['../mumax_sim_inputs/texture_cce0b1e.json'])
+	input_dict_list = load_json_file(['../mumax_sim_inputs/input_parameters.json'])
 
 	if not input_dict_list:
 		# user chose to cancel
