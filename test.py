@@ -6,6 +6,7 @@ from dataclasses import dataclass
 def update_obj_from_dict_recursively(some_obj, some_dict):
 	"""
 	Useful to convert nested json files into nested dataclasses
+	Probably will not work for an array of objects
 
 	Example
 	-------
@@ -60,6 +61,10 @@ def UI_load_json_file():
 
 	return data_loaded
 
+@dataclass
+class Opt2:
+	some_string:str = None
+	some_num:float = 0.0
 
 @dataclass
 class InputOptions:
@@ -67,10 +72,7 @@ class InputOptions:
 	n1: float = 0
 	some_thing: Opt2 = Opt2()
 
-@dataclass
-class Opt2:
-	some_string:str = None
-	some_num:float = 0.0
+
 
 
 def analysis_main():
