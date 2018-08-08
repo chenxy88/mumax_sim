@@ -352,15 +352,15 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	TableAdd(E_Total)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
-	saveas(m,"%s")
+	
 		
 	''' % (sim_param.mat.landau_damping, sim_param.mat.exchange, sim_param.mat.mag_sat, sim_param.mat.dmi_bulk, sim_param.mat.dmi_interface,
 		   sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield, sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
 		   sim_param.geom.grid_cell_count.x, sim_param.geom.grid_cell_count.y, sim_param.geom.grid_cell_count.z,
 		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z, sim_param.geom.z_fm_single_thickness,
-		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry,
-		   sim_param.sim_meta.sim_name_full + '_init')
+		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry  )
 
+	# if production run, relax and save m
 	if sim_param.sim_meta.production_run is True:
 		mumax_commands = mumax_commands + '''\
 		tablesave()
@@ -368,7 +368,13 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		relax()			// high-energy states best minimized by relax()
 		saveas(m,"%s")
 		tablesave()
-		''' % (sim_param.sim_meta.sim_name_full + '_relaxed.ovf')
+		''' % (sim_param.sim_meta.sim_name_full + '_relaxed')
+
+	# if not production run, just save inital mag
+	else:
+		mumax_commands = mumax_commands + '''\
+		saveas(m, "%s")
+		'''%(sim_param.sim_meta.sim_name_full + '_init')
 
 	# defining the location of the .mx3 script
 	# executable = os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + ".mx3")
