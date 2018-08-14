@@ -7,6 +7,7 @@ import string
 import json
 import itertools
 from copy import deepcopy
+import random as rand
 
 def update_obj_from_dict_recursively(some_obj, some_dict):
 	"""
@@ -181,7 +182,7 @@ class GeometryParameter:
 
 	def calc_auto_parameters(self):
 		self.z_single_rep_thickness = self.z_fm_single_thickness + self.z_nm_single_thickness
-		self.phy_size.z = self.z_single_rep_thickness * self.z_layer_rep_num
+		self.phy_size.z = self.z_single_rep_thickness * self.z_layer_rep_num - self.z_nm_single_thickness
 		self.grid_cell_count.z = round(self.phy_size.z / self.z_cell_size)
 		self.mesh_cell_size = Vector(self.phy_size.x / self.grid_cell_count.x, self.phy_size.y / self.grid_cell_count.y, self.phy_size.z / self.grid_cell_count.z)
 
@@ -294,9 +295,9 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	geometry = '''\
 	%s
 	rep_layer := single_layer.repeat(0, 0, z_single_rep_thickness*Nano) // repeat once every this many times
-	//if Mod(z_layer_rep_num, 2) == 0{ //if even number of magnetic layers, translate a little bit
-	//	rep_layer = rep_layer.transl(0,0,z_fm_single_thickness*Nano)
-	//}
+	if Mod(z_layer_rep_num, 2) == 0{ //if even number of magnetic layers, translate a little bit
+		rep_layer = rep_layer.transl(0,0,z_fm_single_thickness*Nano)
+	}
 	rep_layer = rep_layer.transl(0,0,z_fm_single_thickness*Nano/2)
 	setgeom(rep_layer)
 	//saveas(geom, "stack_geom")
@@ -337,28 +338,25 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	SetGridsize(Nx, Ny, Nz)
 	SetCellsize(size_X*Nano/Nx, size_Y*Nano/Ny, size_Z*Nano/Nz)
 
-	//geom, use shape to define geom: one big box, the same size as the simulation area
+	//geometry, use shape to define geom: one big box, the same size as the simulation area
 	%s 
 
 	Ku1	= K1
 	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
-
 	B_ext = vector(0, 0, B_Max) //in Teslas
 	
-	// random magnetisation
-	m = RandomMag()
+	// uniform in the x-y plane, plus a little bit of random magnetisation
+	m = Uniform(1, 1, 0).Add(0.01, RandomMagSeed(%d))
 	
 	TableAdd(B_ext)
 	TableAdd(E_Total)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
-	
-		
 	''' % (sim_param.mat.landau_damping, sim_param.mat.exchange, sim_param.mat.mag_sat, sim_param.mat.dmi_bulk, sim_param.mat.dmi_interface,
 		   sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield, sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
 		   sim_param.geom.grid_cell_count.x, sim_param.geom.grid_cell_count.y, sim_param.geom.grid_cell_count.z,
 		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z, sim_param.geom.z_fm_single_thickness,
-		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry  )
+		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry, rand.randrange(0,2**32))
 
 	# if production run, relax and save m
 	if sim_param.sim_meta.production_run is True:
