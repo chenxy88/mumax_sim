@@ -345,8 +345,8 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
 	B_ext = vector(0, 0, B_Max) //in Teslas
 	
-	// uniform in the x-y plane, plus a little bit of random magnetisation
-	m = Uniform(1, 1, 0).Add(0.01, RandomMagSeed(%d))
+	// full random magnetisation
+	m = RandomMagSeed(%d)
 	
 	TableAdd(B_ext)
 	TableAdd(E_Total)
