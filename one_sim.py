@@ -167,6 +167,7 @@ class MaterialParameters:
 	dmi_bulk: float = 0 # bulk DMI mJ/m^2
 	dmi_interface: float = 2 # interfacial DMI mJ/m^2
 	anistropy_uni: float = 0.5  # 1st order uniaxial anisotropy constant, MJ/m^3. NOTE: This is NOT effective anistropy, which takes into account dipolar energy
+	interlayer_exchange: float = 0 # interlayer exchange in pJ/m
 
 @dataclass
 class GeometryParameter:
@@ -288,22 +289,17 @@ def run_n_convert_mumax(sim_param: SimulationParameters):
 # write mumax3 script
 def writing_mumax_file(sim_param: SimulationParameters):
 
-	geometry_single_layer_cuboid = '''
-	single_layer := cuboid(size_X*Nano, size_Y*Nano, z_fm_single_thickness*Nano)
-	'''
+	geometry = textwrap.dedent('''\
+	for layer_number:=0; layer_number<z_layer_rep_num; layer_number++{
+			// set adjacent layers to be of different regions
+			// so that we could set interlayer exchange coupling 
+			defRegion(Mod(layer_number, 2), layer(layer_number))
+		}
+		ext_scaleExchange(0, 1, %f)
+		''' %sim_param.mat.interlayer_exchange)
 
-	geometry = '''\
-	%s
-	rep_layer := single_layer.repeat(0, 0, z_single_rep_thickness*Nano) // repeat once every this many times
-	if Mod(z_layer_rep_num, 2) == 0{ //if even number of magnetic layers, translate a little bit
-		rep_layer = rep_layer.transl(0,0,z_fm_single_thickness*Nano)
-	}
-	rep_layer = rep_layer.transl(0,0,z_fm_single_thickness*Nano/2)
-	setgeom(rep_layer)
-	//saveas(geom, "stack_geom")
-	''' % (geometry_single_layer_cuboid)
 
-	mumax_commands = '''\
+	mumax_commands = textwrap.dedent('''\
 	Mega :=1e6
 	Pico :=1e-12
 	Nano :=1e-9
@@ -338,7 +334,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	SetGridsize(Nx, Ny, Nz)
 	SetCellsize(size_X*Nano/Nx, size_Y*Nano/Ny, size_Z*Nano/Nz)
 
-	//geometry, use shape to define geom: one big box, the same size as the simulation area
+	//geometry
 	%s 
 
 	Ku1	= K1
@@ -350,36 +346,40 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	
 	TableAdd(B_ext)
 	TableAdd(E_Total)
+	TableAdd(E_anis)
+	TableAdd(E_demag)
+	TableAdd(E_exch)
+	TableAdd(E_Zeeman)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
 	''' % (sim_param.mat.landau_damping, sim_param.mat.exchange, sim_param.mat.mag_sat, sim_param.mat.dmi_bulk, sim_param.mat.dmi_interface,
 		   sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield, sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
 		   sim_param.geom.grid_cell_count.x, sim_param.geom.grid_cell_count.y, sim_param.geom.grid_cell_count.z,
 		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z, sim_param.geom.z_fm_single_thickness,
-		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry, rand.randrange(0,2**32))
+		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry, rand.randrange(0,2**32)))
 
 	# if production run, relax and save m
 	if sim_param.sim_meta.production_run is True:
-		mumax_commands = mumax_commands + '''\
+		mumax_commands = mumax_commands + textwrap.dedent('''\
 		tablesave()
 		MinimizerStop = 1e-6
 		relax()			// high-energy states best minimized by relax()
 		saveas(m,"%s")
 		tablesave()
-		''' % (sim_param.sim_meta.sim_name_full + '_relaxed')
+		''' % (sim_param.sim_meta.sim_name_full + '_relaxed'))
 
 	# if not production run, just save inital mag
 	else:
-		mumax_commands = mumax_commands + '''\
+		mumax_commands = mumax_commands + textwrap.dedent('''\
 		saveas(m, "%s")
-		'''%(sim_param.sim_meta.sim_name_full + '_init')
+		'''%(sim_param.sim_meta.sim_name_full + '_init'))
 
 	# defining the location of the .mx3 script
 	# executable = os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + ".mx3")
 
 	# opening and saving it
 	mumax_file = open(sim_param.sim_meta.mumax_file, "w")
-	mumax_file.write(textwrap.dedent(mumax_commands))
+	mumax_file.write(mumax_commands)
 	mumax_file.close()
 
 	return 0
