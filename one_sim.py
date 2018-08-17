@@ -7,6 +7,7 @@ import string
 import json
 import itertools
 from copy import deepcopy
+import random as rand
 
 def update_obj_from_dict_recursively(some_obj, some_dict):
 	"""
@@ -345,11 +346,15 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 	B_ext = vector(0, 0, B_Max) //in Teslas
 	
-	// random magnetisation
-	m = RandomMag()
+	// full random magnetisation
+	m = RandomMagSeed(%d)
 	
 	TableAdd(B_ext)
 	TableAdd(E_Total)
+	TableAdd(E_anis)
+	TableAdd(E_demag)
+	TableAdd(E_exch)
+	TableAdd(E_Zeeman)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
 	saveas(m,"%s")
@@ -358,7 +363,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		   sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield, sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
 		   sim_param.geom.grid_cell_count.x, sim_param.geom.grid_cell_count.y, sim_param.geom.grid_cell_count.z,
 		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z, sim_param.geom.z_fm_single_thickness,
-		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry,
+		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num, geometry, rand.randrange(0,2**32),
 		   sim_param.sim_meta.sim_name_full + '_init')
 
 	if sim_param.sim_meta.production_run is True:
