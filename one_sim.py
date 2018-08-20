@@ -297,8 +297,8 @@ def writing_mumax_file(sim_param: SimulationParameters):
 			defRegion(Mod(layer_number, 3), layer(layer_number))
 		}		
 		Aex.setregion(0, Exch) // Exchange in J/m^3
-		Aex.setregion(1, Exch*spacer_inplane_exch_scaling) 
-		Aex.setregion(2, Exch*spacer_inplane_exch_scaling) 
+		Aex.setregion(1, Exch) 
+		Aex.setregion(2, Exch) 
 		
 		ext_scaleExchange(0, 1, Interlayer_exch_scaling)
 		ext_scaleExchange(1, 2, Interlayer_exch_scaling)
