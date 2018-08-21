@@ -171,21 +171,22 @@ class MaterialParameters:
 
 @dataclass
 class GeometryParameter:
-	z_fm_single_thickness: float = 1
-	z_nm_single_thickness: float = 2
-	z_layer_rep_num: int = 1
-	z_cell_size: float = 1
-	z_single_rep_thickness: float = 0 # thickness of single repetition
+	z_fm_single_thickness: int = 1 # thickness in number of cells in z
+	z_nm_single_thickness: int = 2 # thickness in number of cells in z
+	z_layer_rep_num: int = 1 # number of repetitions
+	z_single_rep_thickness: int = 3  # thickness of single repetition in number of cells in z
+
+	z_cell_size: float = 1 # physical size of single cell in z, in nm
+
 	phy_size: Vector = Vector(2048, 2048, 0) # in nm
 	grid_cell_count: Vector = Vector(512, 512) # number of cells in simulation, should be power of 2
-	mesh_cell_size: Vector = Vector()
 	pbc: Vector = Vector(0, 0, 0)
 
 	def calc_auto_parameters(self):
 		self.z_single_rep_thickness = self.z_fm_single_thickness + self.z_nm_single_thickness
-		self.phy_size.z = self.z_single_rep_thickness * self.z_layer_rep_num - self.z_nm_single_thickness
-		self.grid_cell_count.z = round(self.phy_size.z / self.z_cell_size)
-		self.mesh_cell_size = Vector(self.phy_size.x / self.grid_cell_count.x, self.phy_size.y / self.grid_cell_count.y, self.phy_size.z / self.grid_cell_count.z)
+		self.grid_cell_count.z = self.z_single_rep_thickness * self.z_layer_rep_num - self.z_nm_single_thickness
+		self.phy_size.z = self.grid_cell_count.z * self.z_cell_size
+
 
 @dataclass
 class SimulationMetadata:
@@ -289,74 +290,58 @@ def run_n_convert_mumax(sim_param: SimulationParameters):
 # write mumax3 script
 def writing_mumax_file(sim_param: SimulationParameters):
 
-	geometry = textwrap.dedent('''\
-	for layer_number:=0; layer_number<z_layer_rep_num; layer_number++{
-			// set adjacent layers to be of different regions
-			// so that we could set interlayer exchange coupling 
-			// layer 0: FM, layer 1: spacer_1, layer 2: spacer_2
-			defRegion(Mod(layer_number, 3), layer(layer_number))
-		}		
-		Aex.setregion(0, Exch) // Exchange in J/m^3
-		Aex.setregion(1, Exch) 
-		Aex.setregion(2, Exch) 
-		
-		ext_scaleExchange(0, 1, Interlayer_exch_scaling)
-		ext_scaleExchange(1, 2, Interlayer_exch_scaling)
-		ext_scaleExchange(2, 0, Interlayer_exch_scaling)
-		
-		Msat.setregion(0, Mag) //Saturation magnetisation in A/m
-		Msat.setregion(1, Mag*spacer_mag_scaling)
-		Msat.setregion(2, Mag*spacer_mag_scaling)  
-		
-		Ku1.setregion(0, K1)
-		Ku1.setregion(1, 0)
-		Ku1.setregion(2, 0)
-		''' )
-
-
 	mumax_commands = textwrap.dedent('''\
 	Mega :=1e6
 	Pico :=1e-12
 	Nano :=1e-9
 	Mili :=1e-3
-
+	
+	// Micromagnetic parameters
 	alpha  =%f		 // Damping
-	Exch := %f*Pico  // Exchange in J/m^3
-	Mag := %f*Mega  //Saturation magnetisation in A/m
-
 	Dbulk  = %f*Mili  //Bulk DMI in J/m^2
 	Dind  = %f*Mili  //Interfacial DMI in J/m^2
+	
+	// Micromagnetic variables
+	Exch := %f*Pico  // Exchange in J/m^3
+	Mag := %f*Mega  //Saturation magnetisation in A/m
 	K1	:=%f*Mega  // Anistropy in J/m^3
 	B_Max :=%f		 // BZ in T
 	
-	spacer_mag_scaling := 0
-	Interlayer_exch_scaling := %f // Exchange scaling
-
+	// Setting micromagnetic parameters to variables
+	Aex = Exch
+	Msat = Mag
+	Ku1 = K1
+	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
+	B_ext = vector(0, 0, B_Max) //in Teslas
+	
+	// Physical size
 	size_X	:=%f //sim_param.phy_size.x
 	size_Y	:=%f
 	size_Z	:=%f
-
+	
+	// Total number of simulations cells
 	Nx	:=%.0f //sim_param.grid_size.x
 	Ny	:=%.0f
 	Nz	:=%.0f
-
+	
+	// PBC, if any
 	PBC_x :=%.0f //sim_param.pbc.x
 	PBC_y :=%.0f
 	PBC_z :=%.0f
 
-	z_fm_single_thickness := %f //in nm, equals to cell thickness
-	z_single_rep_thickness := %f //in nm
-	z_layer_rep_num := %.0f //this many repeats
+	z_single_rep_thickness := %.0f // thickness of single repetition in number of cells in z
+	z_layer_rep_num := %.0f //this many repetitions
 
 	//SetPBC(PBC_x, PBC_y, PBC_z)
 	SetGridsize(Nx, Ny, Nz)
 	SetCellsize(size_X*Nano/Nx, size_Y*Nano/Ny, size_Z*Nano/Nz)
 
 	//geometry
-	%s 
-
-	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
-	B_ext = vector(0, 0, B_Max) //in Teslas
+	rep_layers := Layer(0)
+	for layer_number:=1; layer_number<z_layer_rep_num; layer_number++{
+		rep_layers.Add(Layer(layer_number*z_single_rep_thickness))
+	}
+	setgeom(rep_layers)
 	
 	// full random magnetisation
 	m = RandomMagSeed(%d)
@@ -369,19 +354,17 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	TableAdd(E_Zeeman)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
-	''' % (sim_param.mat.landau_damping, sim_param.mat.exchange, sim_param.mat.mag_sat,
+	''' % (sim_param.mat.landau_damping, sim_param.mat.dmi_bulk, sim_param.mat.dmi_interface,
 
-		   sim_param.mat.dmi_bulk, sim_param.mat.dmi_interface, sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield,
-
-		   sim_param.mat.interlayer_exchange,
+		   sim_param.mat.exchange, sim_param.mat.mag_sat, sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield,
 
 		   sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
+
 		   sim_param.geom.grid_cell_count.x, sim_param.geom.grid_cell_count.y, sim_param.geom.grid_cell_count.z,
+
 		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z,
 
-		   sim_param.geom.z_fm_single_thickness, sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num,
-
-		   geometry,
+		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num,
 
 		   rand.randrange(0,2**32)))
 
