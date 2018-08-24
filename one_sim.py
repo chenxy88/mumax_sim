@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import random
 import string
 import json
-import itertools
+import math
 from copy import deepcopy
 import random as rand
 
@@ -167,7 +167,22 @@ class MaterialParameters:
 	dmi_bulk: float = 0 # bulk DMI mJ/m^2
 	dmi_interface: float = 2 # interfacial DMI mJ/m^2
 	anistropy_uni: float = 0.5  # 1st order uniaxial anisotropy constant, MJ/m^3. NOTE: This is NOT effective anistropy, which takes into account dipolar energy
-	interlayer_exchange: float = 0 # interlayer exchange in pJ/m
+	interlayer_exchange: float = 0 # interlayer exchange scaling
+
+	def calc_effective_medium (self, prescaled_mat_params, scaling: float):
+		# scale the effective medium, which includes the FM and spacer layers
+		mu0 = 4e-7 * math.pi
+
+		# no scaling
+		self.landau_damping = prescaled_mat_params.landau_damping
+		self.interlayer_exchange = prescaled_mat_params.interlayer_exchange
+
+		# scaling according to Woo, S. et al. Nature Materials 15, 501 (2016).
+		self.mag_sat = prescaled_mat_params.mag_sat * scaling
+		self.exchange = prescaled_mat_params.exchange * scaling
+		self.dmi_bulk = prescaled_mat_params.dmi_bulk * scaling
+		self.dmi_interface = prescaled_mat_params.dmi_interface * scaling
+		self.anistropy_uni = scaling*(prescaled_mat_params.anistropy_uni - mu0*1e6*prescaled_mat_params.mag_sat**2/2) + mu0*1e6*self.mag_sat**2/2
 
 @dataclass
 class GeometryParameter:
@@ -181,6 +196,8 @@ class GeometryParameter:
 	phy_size: Vector = Vector(2048, 2048, 0) # in nm
 	grid_cell_count: Vector = Vector(512, 512) # number of cells in simulation, should be power of 2
 	pbc: Vector = Vector(0, 0, 0)
+
+	effective_medium_scaling: float = 1 # scaling of material parameters = t_FM/t_repeat
 
 	def calc_auto_parameters(self):
 		self.z_single_rep_thickness = self.z_fm_single_thickness + self.z_nm_single_thickness
@@ -230,6 +247,8 @@ class SimulationParameters:
 	sim_meta: SimulationMetadata = SimulationMetadata()
 	# MaterialParameters
 	mat: MaterialParameters = MaterialParameters()
+	# MaterialParameters
+	mat_scaled: MaterialParameters = MaterialParameters()
 	# GeometryParameter
 	geom: GeometryParameter = GeometryParameter()
 	# TuningParameters
@@ -296,23 +315,31 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	Nano :=1e-9
 	Mili :=1e-3
 	
-	// Micromagnetic parameters
-	alpha  =%f		 // Damping
-	Dbulk  = %f*Mili  //Bulk DMI in J/m^2
-	Dind  = %f*Mili  //Interfacial DMI in J/m^2
-	
 	// Micromagnetic variables
-	Exch := %f*Pico  // Exchange in J/m^3
-	Mag := %f*Mega  //Saturation magnetisation in A/m
-	K1	:=%f*Mega  // Anistropy in J/m^3
-	B_Max :=%f		 // BZ in T
+	Aex_var := %f*Pico  // Exchange in J/m^3
+	Msat_var := %f*Mega  //Saturation magnetisation in A/m
+	Ku1_var	:= %f*Mega  // Anistropy in J/m^3
+	Dbulk_var  := %f*Mili  //Bulk DMI in J/m^2
+	Dind_var  := %f*Mili  //Interfacial DMI in J/m^2
 	
-	// Setting micromagnetic parameters to variables
-	Aex = Exch
-	Msat = Mag
-	Ku1 = K1
+	// Setting micromagnetic parameters for Region 0
+	Aex.SetRegion(0, Aex_var)
+	Msat.SetRegion(0, Msat_var)
+	Ku1.SetRegion(0, Ku1_var)
+	Dbulk.SetRegion(0, Dbulk_var)
+	Dind.SetRegion(0, Dind_var)
+	
+	// Setting micromagnetic parameters for Region 1
+	Aex.SetRegion(1, Aex_var)
+	Msat.SetRegion(1, Msat_var)
+	Ku1.SetRegion(1, Ku1_var)
+	Dbulk.SetRegion(1, Dbulk_var)
+	Dind.SetRegion(1, Dind_var)
+	
+	// Micromagnetic parameters for all regions
+	alpha  =%f		 // Damping
 	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
-	B_ext = vector(0, 0, B_Max) //in Teslas
+	B_ext = vector(0, 0, %f) //in Teslas
 	
 	// Physical size
 	size_X	:=%f //sim_param.phy_size.x
@@ -331,17 +358,22 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 	z_single_rep_thickness := %.0f // thickness of single repetition in number of cells in z
 	z_layer_rep_num := %.0f //this many repetitions
+	num_of_regions := 2
 
 	//SetPBC(PBC_x, PBC_y, PBC_z)
 	SetGridsize(Nx, Ny, Nz)
 	SetCellsize(size_X*Nano/Nx, size_Y*Nano/Ny, size_Z*Nano/Nz)
 
 	//geometry
-	rep_layers := Layer(0)
-	for layer_number:=1; layer_number<z_layer_rep_num; layer_number++{
-		rep_layers.Add(Layer(layer_number*z_single_rep_thickness))
+	for layer_number:=0; layer_number<z_layer_rep_num; layer_number++{
+		// set adjacent layers to be of different regions
+		// so that we could set interlayer exchange coupling 
+		// layer 0: FM, layer 1: FM
+		defRegion(Mod(layer_number, num_of_regions), layer(layer_number))
 	}
-	setgeom(rep_layers)
+	
+	// interlayer exchange scaling
+	ext_scaleExchange(0, 1, %f)
 	
 	// full random magnetisation
 	m = RandomMagSeed(%d)
@@ -354,9 +386,9 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	TableAdd(E_Zeeman)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
-	''' % (sim_param.mat.landau_damping, sim_param.mat.dmi_bulk, sim_param.mat.dmi_interface,
+	''' % (sim_param.mat_scaled.exchange, sim_param.mat_scaled.mag_sat, sim_param.mat_scaled.anistropy_uni, sim_param.mat_scaled.dmi_bulk, sim_param.mat_scaled.dmi_interface,
 
-		   sim_param.mat.exchange, sim_param.mat.mag_sat, sim_param.mat.anistropy_uni, sim_param.tune.external_Bfield,
+		   sim_param.mat_scaled.landau_damping, sim_param.tune.external_Bfield,
 
 		   sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
 
@@ -365,6 +397,8 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z,
 
 		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num,
+
+		   sim_param.mat_scaled.interlayer_exchange,
 
 		   rand.randrange(0,2**32)))
 
@@ -419,9 +453,14 @@ def main():
 		for loop, sim_param_i in enumerate(sim_params_list):
 
 			sim_param_i.sim_meta.loop = loop
+
 			# generate new names and calc geometry
 			sim_param_i.sim_meta.calc_auto_parameters()
 			sim_param_i.geom.calc_auto_parameters()
+
+			# do effective medium scaling
+			sim_param_i.mat_scaled.calc_effective_medium(sim_param_i.mat, sim_param_i.geom.effective_medium_scaling)
+
 			# save each individual simulation's json params
 			save_json_file(sim_param_i)
 
