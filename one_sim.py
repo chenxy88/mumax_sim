@@ -68,26 +68,32 @@ def convert_obj_to_json_recursively(obj):
 	json_str += '}'
 	return json_str
 
+# this function is the heart of one_sim
 def outer_product_object_list(obj, start_ind = 0):
 	# given an object which may contain some lists, return a list of objects that
 	# holds individuals items of the list instead
+	# if the object contains multiple lists, a list of objects equivalent to the outerproduct of
+	# those lists are returned
+	# this works with nest objects and but does NOT work with NESTED LISTS by design (let's not use nested lists)
 
 	assert (hasattr(obj, '__dict__'))
 	obj_dict = obj.__dict__
 	dict_list = list(enumerate(obj_dict))
 
+	# scan through each member of the object
 	for ind in range(start_ind, len(dict_list)):
 
 		key = dict_list[ind][1]
 		val = obj_dict[key]
 
-		# if found an object
+		# if found a nested object
 		if hasattr(val, '__dict__'):
 			# lets open up this object and explore
 			sub_obj = outer_product_object_list(val)
 			# if it turns out that this object contain lists
 			if isinstance(sub_obj, list):
-
+				# flatten any nested lists of sub objects
+				sub_obj = flatten(sub_obj)
 				result = [None] * len(sub_obj)
 
 				for (ind_i, val_i) in enumerate(sub_obj):
@@ -101,7 +107,6 @@ def outer_product_object_list(obj, start_ind = 0):
 			else:
 				pass
 
-
 		# if found a list, stop and flatten list
 		elif isinstance(val, list):
 
@@ -109,11 +114,13 @@ def outer_product_object_list(obj, start_ind = 0):
 
 			for (ind_i, val_i) in enumerate(val):
 				obj_tmp = deepcopy(obj)
+				# replace list with a single value
 				setattr(obj_tmp, key, val_i)
-				result[ind_i] = outer_product_object_list(obj_tmp, start_ind+1) #do not open up list of list
+				result[ind_i] = outer_product_object_list(obj_tmp, start_ind+1) #plus one -> do not open up nested list
 
 			return  result
 
+	# if no objects or list are found, just return this object
 	return obj
 
 def flatten(some_list):
