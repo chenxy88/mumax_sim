@@ -218,7 +218,7 @@ class SimulationMetadata:
 	stage: int = 0
 	loop: int = -1
 	sim_name: str = ''
-	sim_full_name: str = ''
+	sim_name_full: str = ''
 	walltime: str = '24:00:00'
 	sim_id: str = ''
 	output_dir: str = ''
@@ -279,7 +279,7 @@ def save_json_file(sim_param: SimulationParameters):
 def writing_sh(sim_param: SimulationParameters):
 	server_script = textwrap.dedent('''\
 	#!/bin/bash
-	#PBS -N one_sim
+	#PBS -N %s
 	#PBS -q gpu
 	#PBS -l Walltime=%s
 	#PBS -l select=1:ncpus=24:mem=24GB
@@ -287,8 +287,8 @@ def writing_sh(sim_param: SimulationParameters):
 	module load mumax
 
 	mumax3 %s
-	''' % (sim_param.sim_meta.walltime, sim_param.sim_meta.project_code, sim_param.sim_meta.mumax_file)  # 00:00:30
-						   )
+	''' % (sim_param.sim_meta.sim_name_full, sim_param.sim_meta.walltime, sim_param.sim_meta.project_code, sim_param.sim_meta.mumax_file)  # 00:00:30
+									)
 	# defining the location of the .mx3 script
 	sh_file = sim_param.sim_meta.sh_file
 
