@@ -329,19 +329,26 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	Dbulk_var  := %f*Mili  //Bulk DMI in J/m^2
 	Dind_var  := %f*Mili  //Interfacial DMI in J/m^2
 	
-	// Setting micromagnetic parameters for Region 0
-	Aex.SetRegion(0, Aex_var)
-	Msat.SetRegion(0, Msat_var)
-	Ku1.SetRegion(0, Ku1_var)
-	Dbulk.SetRegion(0, Dbulk_var)
-	Dind.SetRegion(0, Dind_var)
+	// Setting micromagnetic parameters for Region 0: Non-magnetic
+	Aex.SetRegion(0, 10*Pico)
+	Msat.SetRegion(0, 0)
+	Ku1.SetRegion(0, 0)
+	Dbulk.SetRegion(0, 0)
+	Dind.SetRegion(0, 0)
 	
-	// Setting micromagnetic parameters for Region 1
+	// Setting micromagnetic parameters for Region 1: FM 1
 	Aex.SetRegion(1, Aex_var)
 	Msat.SetRegion(1, Msat_var)
 	Ku1.SetRegion(1, Ku1_var)
 	Dbulk.SetRegion(1, Dbulk_var)
 	Dind.SetRegion(1, Dind_var)
+	
+	// Setting micromagnetic parameters for Region 2: FM 2
+	Aex.SetRegion(2, Aex_var)
+	Msat.SetRegion(2, Msat_var)
+	Ku1.SetRegion(2, Ku1_var)
+	Dbulk.SetRegion(2, Dbulk_var)
+	Dind.SetRegion(2, Dind_var)
 	
 	// Micromagnetic parameters for all regions
 	alpha  =%f		 // Damping
@@ -365,26 +372,28 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 	z_single_rep_thickness := %.0f // thickness of single repetition in number of cells in z
 	z_layer_rep_num := %.0f //this many repetitions
-	num_of_regions := 2
+	num_of_regions := 2 // number of FM regions (exclude NM region 0)
 
 	//SetPBC(PBC_x, PBC_y, PBC_z)
 	SetGridsize(Nx, Ny, Nz)
 	SetCellsize(size_X*Nano/Nx, size_Y*Nano/Ny, size_Z*Nano/Nz)
 
 	//geometry
-	for layer_number:=0; layer_number<z_layer_rep_num; layer_number++{
+	for layer_number:=0; layer_number<Nz; layer_number+= z_single_rep_thickness {
 		// set adjacent layers to be of different regions
 		// so that we could set interlayer exchange coupling 
-		// layer 0: FM, layer 1: FM
-		defRegion(Mod(layer_number, num_of_regions), layer(layer_number))
+		// layer 1: FM1, layer 2: FM2
+		defRegion(Mod(layer_number, num_of_regions)+1, layer(layer_number))
 	}
 	
 	// interlayer exchange scaling
-	ext_scaleExchange(0, 1, %f)
+	ext_scaleExchange(1, 2, %f)
 	
 	// full random magnetisation
-	m = RandomMagSeed(%d)
-	
+	m.setRegion(0, Uniform(0,0,0))
+	m.setRegion(1, RandomMagSeed(%d))
+	m.setRegion(2, RandomMagSeed(%d))
+
 	TableAdd(B_ext)
 	TableAdd(E_Total)
 	TableAdd(E_anis)
@@ -407,7 +416,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 		   sim_param.mat_scaled.interlayer_exchange,
 
-		   rand.randrange(0,2**32)))
+		   rand.randrange(0,2**32), rand.randrange(0,2**32)))
 
 	# if production run, relax and save m
 	if sim_param.sim_meta.production_run is True:
