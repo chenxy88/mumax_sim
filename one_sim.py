@@ -1,5 +1,5 @@
 import os
-from subprocess import getstatusoutput
+import subprocess
 import textwrap
 from dataclasses import dataclass
 import random
@@ -8,6 +8,13 @@ import json
 import math
 from copy import deepcopy
 import random as rand
+
+# This branch creates a list of simulations that calculates the M(H) loop of the sample
+# For the first job, starting from random magnetisation, the system goes to the first magnetic field in the array and relaxes
+# The magnetisation is saved for subsequent jobs. The magnetisation of the middle slide is saved to output.
+# Subsequent jobs will load the magnetisation of the previous job, go to the next field value and relax.
+
+# All other input parameters are expected to be single values instead of arrays
 
 def update_obj_from_dict_recursively(some_obj, some_dict):
 	"""
@@ -135,28 +142,25 @@ def flatten(some_list):
 
 
 
-def load_json_file(files):
+def load_json_file(input_file):
 	"""
 	load input json file
 	:return:
 	"""
 	# root = tk.Tk()
-	# files = filedialog.askopenfilenames(title='Select json file')
+	# input_file = filedialog.askopenfilenames(title='Select json file')
 
-	data_loaded = []
+	data_loaded = None
 
-	if files == '':
+	if input_file == '':
 		return data_loaded
 
-	for file in files:
-		converted_path = os.path.relpath(file)
-		# if the user did selected something
-		with open(converted_path) as data_file:
-			data_loaded.append(json.load(data_file))
+	converted_path = os.path.relpath(input_file)
+	# if the user did selected something
+	with open(converted_path) as data_file:
+		data_loaded = json.load(data_file)
 
 	return data_loaded
-
-
 
 # simple helper classes
 @dataclass
@@ -191,6 +195,7 @@ class MaterialParameters:
 		self.dmi_interface = prescaled_mat_params.dmi_interface * scaling
 		self.anistropy_uni = scaling*(prescaled_mat_params.anistropy_uni - mu0*1e6*prescaled_mat_params.mag_sat**2/2) + mu0*1e6*self.mag_sat**2/2
 
+
 @dataclass
 class GeometryParameter:
 	z_fm_single_thickness: int = 1 # thickness in number of cells in z
@@ -222,7 +227,9 @@ class SimulationMetadata:
 	walltime: str = '24:00:00'
 	sim_id: str = ''
 	output_dir: str = ''
+	output_subdir: str = ''
 	mumax_file: str = ''
+	previous_jobid: str = ''
 
 	sh_file: str = ''
 	production_run: bool = False
@@ -234,12 +241,17 @@ class SimulationMetadata:
 			self.output_dir = os.path.join(os.getcwd(), self.sim_name)
 		# convert to system specific paths
 		self.output_dir = os.path.abspath(self.output_dir)
+
 		self.sim_id = ''.join([random.choice(string.ascii_letters+string.digits) for ch in range(8)])
 		self.sim_name_full = self.sim_name + '_st%02d_%02d' % (self.stage, self.loop)+'_'+self.sim_id
-		self.mumax_file = os.path.join(self.output_dir, self.sim_name_full + '.mx3')
-		self.sh_file = os.path.join(self.output_dir, 'one_sim.sh')
+
+		# output subdirectory contains all the results from this series of M(H)
+		self.output_subdir = os.path.join(self.output_dir, (self.sim_name + '_st%02d' % self.stage))
+		self.mumax_file = os.path.join(self.output_subdir, self.sim_name_full + '.mx3')
+		self.sh_file = os.path.join(self.output_subdir, 'one_sim.sh')
+
 		self.production_run = not os.path.isfile('./not_production_run.txt')  # this will be set automatically by checking if file not_production_run.txt exist in current dir
-		status, outputstr = getstatusoutput('mumax3')
+		status, outputstr = subprocess.getstatusoutput('mumax3')
 		self.mumax_installed = status == 0
 
 @dataclass
@@ -268,9 +280,11 @@ class SimulationParameters:
 
 
 def save_json_file(sim_param: SimulationParameters):
-	if not os.path.exists(sim_param.sim_meta.output_dir):
-		os.makedirs(sim_param.sim_meta.output_dir)
-	json_file = open(os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full +".json"), "w")
+
+	if not os.path.exists(sim_param.sim_meta.output_subdir):
+		os.makedirs(sim_param.sim_meta.output_subdir)
+
+	json_file = open(os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full +".json"), "w")
 	json_str = convert_obj_to_json_recursively(sim_param)
 	parsed = json.loads(json_str)
 	json.dump(parsed, json_file, sort_keys=True, indent=2)
@@ -299,11 +313,28 @@ def writing_sh(sim_param: SimulationParameters):
 
 	return 0
 
-# qsub the job
+# submit the job to PBS
 def submit_sh(sim_param: SimulationParameters):
 	if os.path.isfile(sim_param.sim_meta.sh_file):
-		os.system('qsub < %s ' % sim_param.sim_meta.sh_file)
+		if sim_param.sim_meta.loop == 0:
+			# first step
+			qsub_params = ['qsub',
+						   '-o',sim_param.sim_meta.output_subdir,
+						   '-e',sim_param.sim_meta.output_subdir,
+						   sim_param.sim_meta.sh_file]
+			jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
+			# the previous_jobid is saved to sim_param, which is then extracted in the main loop
+			sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
 
+		else:
+			# subsequent steps will only start upon completion of previous
+			qsub_params = ['qsub',
+						   '-o', sim_param.sim_meta.output_subdir,
+						   '-e', sim_param.sim_meta.output_subdir,
+						   '-W','depend=afterany:%s'%sim_param.sim_meta.previous_jobid,
+						   sim_param.sim_meta.sh_file]
+			jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
+			sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
 	return 0
 
 def run_n_convert_mumax(sim_param: SimulationParameters):
@@ -387,12 +418,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	}
 	
 	// interlayer exchange scaling
-	ext_scaleExchange(1, 2, %f)
-	
-	// full random magnetisation
-	m.setRegion(0, Uniform(0,0,0))
-	m.setRegion(1, RandomMagSeed(%d))
-	m.setRegion(2, RandomMagSeed(%d))
+	ext_scaleExchange(1, 2, %f)	
 
 	TableAdd(B_ext)
 	TableAdd(E_Total)
@@ -402,6 +428,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	TableAdd(E_Zeeman)
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
+	
 	''' % (sim_param.mat_scaled.exchange, sim_param.mat_scaled.mag_sat, sim_param.mat_scaled.anistropy_uni, sim_param.mat_scaled.dmi_bulk, sim_param.mat_scaled.dmi_interface,
 
 		   sim_param.mat_scaled.landau_damping, sim_param.tune.external_Bfield,
@@ -414,25 +441,44 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num,
 
-		   sim_param.mat_scaled.interlayer_exchange,
+		   sim_param.mat_scaled.interlayer_exchange))
 
-		   rand.randrange(0,2**32), rand.randrange(0,2**32)))
+	if sim_param.sim_meta.loop == 0:
+		# start with random magnetisation for the first field
+		mumax_commands = mumax_commands+textwrap.dedent('''\
+		// full	random	magnetisation
+		m.setRegion(0, Uniform(0, 0, 0))
+		m.setRegion(1, RandomMagSeed(%d))
+		m.setRegion(2, RandomMagSeed(%d))
+		
+		''' %(rand.randrange(0,2**32), rand.randrange(0,2**32)))
 
+	else:
+		# load previous magnetisation for subsequent fields
+		mumax_commands = mumax_commands + textwrap.dedent('''\
+		// load the previous magnetisation
+		m.LoadFile("config.ovf")
+		
+		''' )
+
+	middle_layer = (math.ceil(sim_param.geom.z_layer_rep_num/2)-1)*sim_param.geom.z_single_rep_thickness
 	# if production run, relax and save m
 	if sim_param.sim_meta.production_run is True:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
-		tablesave()
 		MinimizerStop = 1e-6
 		relax()			// high-energy states best minimized by relax()
-		saveas(m,"%s")
+		saveas(m,"config")
+		// save only the middle layer
+		saveas(CropLayer(m, %d),"%s") 
 		tablesave()
-		''' % (sim_param.sim_meta.sim_name_full + '_relaxed'))
+		''' %(middle_layer, sim_param.sim_meta.sim_name_full))
 
 	# if not production run, just save inital mag
 	else:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
-		saveas(m, "%s")
-		'''%(sim_param.sim_meta.sim_name_full + '_init'))
+		// save only the middle layer
+		saveas(CropLayer(m, %d),"%s") 
+		'''%(middle_layer, sim_param.sim_meta.sim_name_full))
 
 	# defining the location of the .mx3 script
 	# executable = os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + ".mx3")
@@ -448,51 +494,59 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 def main():
 	# --- CHOOSE INPUT OPTION --- #
-	input_dict_list = load_json_file(['../mumax_sim_inputs/input_parameters.json'])
+	input_dict = load_json_file('../mumax_sim_inputs/input_parameters.json')
 
-	if not input_dict_list:
-		# user chose to cancel
-		return
+	sim_params = SimulationParameters()
+	update_obj_from_dict_recursively(sim_params, input_dict)
 
-	# --- BIG OUTSIDE LOOP THRU LIST OF INPUT JSON FILES --- #
-	for input_dict in input_dict_list:
-		sim_params = SimulationParameters()
-		update_obj_from_dict_recursively(sim_params, input_dict)
+	# generate simulation full name
+	sim_params.sim_meta.calc_auto_parameters()
 
-		# generate simulation full name
-		sim_params.sim_meta.calc_auto_parameters()
+	# generate list of simulations based on main input
+	sim_params_list = sim_params.generate_sims()
 
-		# save the main input json for record
-		save_json_file(sim_params)
-		sim_params_list = sim_params.generate_sims()
+	# this will check that the only array is that of external_Bfield
+	if len(sim_params_list) != len(sim_params.tune.external_Bfield):
+		raise ValueError('There should not be other arrays than external_Bfield for M(H) loop simulations!')
 
-		for loop, sim_param_i in enumerate(sim_params_list):
+	# create the subdirectory if it does not exist
+	if not os.path.exists(sim_params.sim_meta.output_subdir):
+		os.makedirs(sim_params.sim_meta.output_subdir)
 
-			sim_param_i.sim_meta.loop = loop
+	# save the main input json for record
+	save_json_file(sim_params)
 
-			# generate new names and calc geometry
-			sim_param_i.sim_meta.calc_auto_parameters()
-			sim_param_i.geom.calc_auto_parameters()
+	# previous job id
+	prev_jobid = ''
 
-			# do effective medium scaling
-			sim_param_i.mat_scaled.calc_effective_medium(sim_param_i.mat, sim_param_i.geom.effective_medium_scaling)
+	for loop, sim_param_i in enumerate(sim_params_list):
 
-			# save each individual simulation's json params
-			save_json_file(sim_param_i)
+		sim_param_i.sim_meta.loop = loop
+		sim_param_i.sim_meta.previous_jobid = prev_jobid
 
-			if not os.path.exists(sim_param_i.sim_meta.output_dir):
-				os.makedirs(sim_param_i.sim_meta.output_dir)
+		# generate new names and calc geometry
+		sim_param_i.sim_meta.calc_auto_parameters()
+		sim_param_i.geom.calc_auto_parameters()
 
-			sim_param_i.sim_meta.loop = loop
-			writing_mumax_file(sim_param_i)
-			writing_sh(sim_param_i)
+		# do effective medium scaling
+		sim_param_i.mat_scaled.calc_effective_medium(sim_param_i.mat, sim_param_i.geom.effective_medium_scaling)
 
-			if sim_param_i.sim_meta.production_run:
-				# the real deal, write sh scripts
-				submit_sh(sim_param_i)
-			else:
-				if sim_param_i.sim_meta.mumax_installed:
-					run_n_convert_mumax(sim_param_i)
+		# save each individual simulation's json params
+		save_json_file(sim_param_i)
+
+		# these are written to the subdirectory
+		writing_mumax_file(sim_param_i)
+		writing_sh(sim_param_i)
+
+		if sim_param_i.sim_meta.production_run:
+			# the real deal, write sh scripts
+			submit_sh(sim_param_i)
+		else:
+			if sim_param_i.sim_meta.mumax_installed:
+				run_n_convert_mumax(sim_param_i)
+
+		# save the prev_jobid
+		prev_jobid = sim_param_i.sim_meta.previous_jobid
 
 	return
 
