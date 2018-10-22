@@ -307,7 +307,7 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out',prev_sim_param.sim_meta.config_ovf_name)
 		server_script = server_script + textwrap.dedent('''\
 		
-		mv -f %s %s
+		cp -f %s %s
 		''' % (prev_output_config, sim_param.sim_meta.output_subdir))
 
 	server_script = server_script+ textwrap.dedent('''\
