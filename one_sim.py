@@ -230,6 +230,7 @@ class SimulationMetadata:
 	output_subdir: str = ''
 	mumax_file: str = ''
 	previous_jobid: str = ''
+	config_ovf_name: str = 'config.ovf'
 
 	sh_file: str = ''
 	production_run: bool = False
@@ -290,7 +291,7 @@ def save_json_file(sim_param: SimulationParameters):
 	json.dump(parsed, json_file, sort_keys=True, indent=2)
 
 # Write PBS script for submission to queue
-def writing_sh(sim_param: SimulationParameters):
+def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParameters):
 	server_script = textwrap.dedent('''\
 	#!/bin/bash
 	#PBS -N %s
@@ -299,10 +300,19 @@ def writing_sh(sim_param: SimulationParameters):
 	#PBS -l select=1:ncpus=24:mem=24GB
 	#PBS -P %s
 	module load mumax
+	''' % (sim_param.sim_meta.sim_name_full, sim_param.sim_meta.walltime, sim_param.sim_meta.project_code))
 
+	# move the previous config file out
+	if sim_param.sim_meta.loop != 0:
+		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out',prev_sim_param.sim_meta.config_ovf_name)
+		server_script = server_script + textwrap.dedent('''\
+		
+		mv -f %s %s
+		''' % (prev_output_config, sim_param.sim_meta.output_subdir))
+
+	server_script = server_script+ textwrap.dedent('''\
 	mumax3 %s
-	''' % (sim_param.sim_meta.sim_name_full, sim_param.sim_meta.walltime, sim_param.sim_meta.project_code, sim_param.sim_meta.mumax_file)  # 00:00:30
-									)
+	''' % (sim_param.sim_meta.mumax_file))
 	# defining the location of the .mx3 script
 	sh_file = sim_param.sim_meta.sh_file
 
@@ -457,9 +467,9 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		# load previous magnetisation for subsequent fields
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// load the previous magnetisation
-		m.LoadFile("config.ovf")
+		m.LoadFile("%s")
 		
-		''' )
+		''' %(os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.config_ovf_name)))
 
 	middle_layer = (math.ceil(sim_param.geom.z_layer_rep_num/2)-1)*sim_param.geom.z_single_rep_thickness
 	# if production run, relax and save m
@@ -467,11 +477,11 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		MinimizerStop = 1e-6
 		relax()			// high-energy states best minimized by relax()
-		saveas(m,"config")
+		saveas(m,"%s")
 		// save only the middle layer
 		saveas(CropLayer(m, %d),"%s") 
 		tablesave()
-		''' %(middle_layer, sim_param.sim_meta.sim_name_full))
+		''' %(sim_param.sim_meta.config_ovf_name, middle_layer, sim_param.sim_meta.sim_name_full))
 
 	# if not production run, just save inital mag
 	else:
@@ -518,6 +528,7 @@ def main():
 
 	# previous job id
 	prev_jobid = ''
+	prev_sim_param = None
 
 	for loop, sim_param_i in enumerate(sim_params_list):
 
@@ -536,7 +547,7 @@ def main():
 
 		# these are written to the subdirectory
 		writing_mumax_file(sim_param_i)
-		writing_sh(sim_param_i)
+		writing_sh(sim_param_i, prev_sim_param)
 
 		if sim_param_i.sim_meta.production_run:
 			# the real deal, write sh scripts
@@ -547,6 +558,7 @@ def main():
 
 		# save the prev_jobid
 		prev_jobid = sim_param_i.sim_meta.previous_jobid
+		prev_sim_param = sim_param_i
 
 	return
 
