@@ -258,6 +258,15 @@ class SimulationMetadata:
 @dataclass
 class TuningParameters:
 	external_Bfield: float = 0
+	# whether or not the first run of the M(H) loop starts with previous mag. Useful for minor loops.
+	start_series_with_prev_mag: bool = False
+	thermal_fluctuation: bool = False
+	uniform_mag_initial: bool = True
+	m_h_loop_run: bool = True
+	temperature: float = 300
+	temperature_run_time: float = 5e-10
+	temperature_run_steps: int = 100
+	temperature_run_dt: float = 1e-15
 
 # all experimental parameters
 @dataclass
@@ -303,7 +312,7 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 	''' % (sim_param.sim_meta.sim_name_full, sim_param.sim_meta.walltime, sim_param.sim_meta.project_code))
 
 	# move the previous config file out
-	if sim_param.sim_meta.loop != 0:
+	if sim_param.sim_meta.loop != 0 and sim_param.tune.m_h_loop_run:
 		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out',prev_sim_param.sim_meta.config_ovf_name)
 		server_script = server_script + textwrap.dedent('''\
 		
@@ -326,7 +335,7 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 # submit the job to PBS
 def submit_sh(sim_param: SimulationParameters):
 	if os.path.isfile(sim_param.sim_meta.sh_file):
-		if sim_param.sim_meta.loop == 0:
+		if sim_param.sim_meta.loop == 0 or not sim_param.tune.m_h_loop_run:
 			# first step
 			qsub_params = ['qsub',
 						   '-o',sim_param.sim_meta.output_subdir,
@@ -341,7 +350,7 @@ def submit_sh(sim_param: SimulationParameters):
 			qsub_params = ['qsub',
 						   '-o', sim_param.sim_meta.output_subdir,
 						   '-e', sim_param.sim_meta.output_subdir,
-						   '-W','depend=afterany:%s'%sim_param.sim_meta.previous_jobid,
+						   '-W','depend=afterok:%s'%sim_param.sim_meta.previous_jobid,
 						   sim_param.sim_meta.sh_file]
 			jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
 			sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
@@ -453,25 +462,68 @@ def writing_mumax_file(sim_param: SimulationParameters):
 
 		   sim_param.mat_scaled.interlayer_exchange))
 
-	if sim_param.sim_meta.loop == 0:
-		# start with random magnetisation for the first field
-		mumax_commands = mumax_commands+textwrap.dedent('''\
-		// full	random	magnetisation
-		m.setRegion(0, Uniform(0, 0, 0))
-		m.setRegion(1, RandomMagSeed(%d))
-		m.setRegion(2, RandomMagSeed(%d))
-		
-		''' %(rand.randrange(0,2**32), rand.randrange(0,2**32)))
+	if (sim_param.sim_meta.loop == 0 and not sim_param.tune.start_series_with_prev_mag) or not sim_param.tune.m_h_loop_run:
+
+		if sim_param.tune.uniform_mag_initial:
+			# start with uniform magnetisation for the first field
+			mumax_commands = mumax_commands + textwrap.dedent('''\
+			// initialise with +z uniform mag since M(H) loop with start at saturation
+			m.setRegion(0, Uniform(0, 0, 0))
+			m.setRegion(1, Uniform(0, 0, 1))
+			m.setRegion(2, Uniform(0, 0, 1))
+			tablesave()
+
+			''')
+
+		else:
+			# start with random magnetisation for the first field
+			mumax_commands = mumax_commands+textwrap.dedent('''\
+			// initialise with random magnetisation
+			m.setRegion(0, Uniform(0, 0, 0))
+			m.setRegion(1, RandomMagSeed(%d))
+			m.setRegion(2, RandomMagSeed(%d))
+			tablesave()
+
+			''' %(rand.randrange(0,2**32), rand.randrange(0,2**32)))
 
 	else:
 		# load previous magnetisation for subsequent fields
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// load the previous magnetisation
 		m.LoadFile("%s")
+		tablesave()
 		
 		''' %(os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.config_ovf_name)))
 
-	middle_layer = (math.ceil(sim_param.geom.z_layer_rep_num/2)-1)*sim_param.geom.z_single_rep_thickness
+	middle_layer = (math.ceil(sim_param.geom.z_layer_rep_num / 2) - 1) * sim_param.geom.z_single_rep_thickness
+
+	if sim_param.tune.thermal_fluctuation:
+		mumax_commands = mumax_commands + textwrap.dedent('''\
+		// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
+		SetSolver(2) // Heun
+		FixDt = %E
+		Temp = %f 
+		temperature_run_time := %E
+		temperature_run_steps:= %f
+		tableautosave(temperature_run_time/temperature_run_steps)
+		
+		Run(temperature_run_time)
+		
+		// save only the middle layer
+		saveas(CropLayer(m, %d),"%s") 
+		
+		// change back to normal settings
+		SetSolver(5) // back to default solver
+		FixDt = 0 // turn off fixed time step
+		Temp = 0 // turn off temperature
+
+		''' % (sim_param.tune.temperature_run_dt,
+			   sim_param.tune.temperature,
+			   sim_param.tune.temperature_run_time,
+			   sim_param.tune.temperature_run_steps,
+			   middle_layer,
+			   'after_temp_'+sim_param.sim_meta.sim_name_full))
+
 	# if production run, relax and save m
 	if sim_param.sim_meta.production_run is True:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
@@ -516,7 +568,7 @@ def main():
 	sim_params_list = sim_params.generate_sims()
 
 	# this will check that the only array is that of external_Bfield
-	if len(sim_params_list) != len(sim_params.tune.external_Bfield):
+	if sim_params.tune.m_h_loop_run and  len(sim_params_list) != len(sim_params.tune.external_Bfield):
 		raise ValueError('There should not be other arrays than external_Bfield for M(H) loop simulations!')
 
 	# create the subdirectory if it does not exist
