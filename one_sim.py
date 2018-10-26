@@ -262,6 +262,7 @@ class TuningParameters:
 	start_series_with_prev_mag: bool = False
 	thermal_fluctuation: bool = False
 	uniform_mag_initial: bool = True
+	# whether or not previous config is copied out to common, and next run starts with prev config
 	m_h_loop_run: bool = True
 	temperature: float = 300
 	temperature_run_time: float = 5e-10
@@ -482,7 +483,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 			m.setRegion(0, Uniform(0, 0, 0))
 			m.setRegion(1, RandomMagSeed(%d))
 			m.setRegion(2, RandomMagSeed(%d))
-			tablesave()
+			tablesave()			
 
 			''' %(rand.randrange(0,2**32), rand.randrange(0,2**32)))
 
@@ -502,15 +503,19 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
 		SetSolver(2) // Heun
 		FixDt = %E
-		Temp = %f 
+		Temp = %f
 		temperature_run_time := %E
 		temperature_run_steps:= %f
 		tableautosave(temperature_run_time/temperature_run_steps)
 		
+		middle_layer := %d
+		// save the middle slice of the config
+		AutoSave(CropLayer(m, middle_layer), temperature_run_time/temperature_run_steps) 
+		
 		Run(temperature_run_time)
 		
 		// save only the middle layer
-		saveas(CropLayer(m, %d),"%s") 
+		saveas(CropLayer(m, middle_layer),"%s") 
 		
 		// change back to normal settings
 		SetSolver(5) // back to default solver
@@ -539,8 +544,8 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	else:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// save only the middle layer
-		saveas(CropLayer(m, %d),"%s") 
-		'''%(middle_layer, sim_param.sim_meta.sim_name_full))
+		saveas(CropLayer(m, middle_layer),"%s") 
+		'''%(sim_param.sim_meta.sim_name_full))
 
 	# defining the location of the .mx3 script
 	# executable = os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + ".mx3")
