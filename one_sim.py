@@ -266,8 +266,9 @@ class TuningParameters:
 	m_h_loop_run: bool = True
 	temperature: float = 300
 	temperature_run_time: float = 5e-10
-	temperature_run_steps: int = 100
 	temperature_run_dt: float = 1e-15
+	mag_autosave_period: float = 0 # zero disable autosave
+	table_autosave_period: float = 1e-11 # 100 to 1000 points for 1ns to 10ns run
 
 # all experimental parameters
 @dataclass
@@ -504,13 +505,12 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		SetSolver(2) // Heun
 		FixDt = %E
 		Temp = %f
-		temperature_run_time := %E
-		temperature_run_steps:= %f
-		tableautosave(temperature_run_time/temperature_run_steps)
+		temperature_run_time := %E		
 		
 		middle_layer := %d
-		// save the middle slice of the config
-		AutoSave(CropLayer(m, middle_layer), temperature_run_time/temperature_run_steps) 
+		// save the middle slice of the config	
+		AutoSave(CropLayer(m, middle_layer), %E) 
+		tableautosave(%E)
 		
 		Run(temperature_run_time)
 		
@@ -525,8 +525,9 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		''' % (sim_param.tune.temperature_run_dt,
 			   sim_param.tune.temperature,
 			   sim_param.tune.temperature_run_time,
-			   sim_param.tune.temperature_run_steps,
 			   middle_layer,
+			   sim_param.tune.mag_autosave_period,
+			   sim_param.tune.table_autosave_period,
 			   'after_temp_'+sim_param.sim_meta.sim_name_full))
 
 	# if production run, relax and save m
