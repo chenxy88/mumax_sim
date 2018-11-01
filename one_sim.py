@@ -503,6 +503,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
 		SetSolver(2) // Heun
+		ThermSeed(%d) // Set a random seed for thermal noise 
 		FixDt = %E
 		Temp = %f
 		temperature_run_time := %E		
@@ -522,7 +523,8 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		FixDt = 0 // turn off fixed time step
 		Temp = 0 // turn off temperature
 
-		''' % (sim_param.tune.temperature_run_dt,
+		''' % (rand.randrange(0,2**32),
+			   sim_param.tune.temperature_run_dt,
 			   sim_param.tune.temperature,
 			   sim_param.tune.temperature_run_time,
 			   middle_layer,
