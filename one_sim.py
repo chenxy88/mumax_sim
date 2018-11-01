@@ -515,11 +515,10 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		tableautosave(%E)
 		
 		// decide whether to use autostop condition
+		// set temperature_run_time to neg to use autostop condition
 		if temperature_run_time > 0	{
 			Run(temperature_run_time)
-		}
-		// set temperature_run_time to neg to use autostop condition
-		else {
+		} else {
 			mz := m.comp(2)
 			RunWhile(mz.average() > %f) 
 		}		
