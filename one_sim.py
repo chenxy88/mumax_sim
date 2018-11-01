@@ -267,6 +267,7 @@ class TuningParameters:
 	temperature: float = 300
 	temperature_run_time: float = 5e-10
 	temperature_run_dt: float = 1e-15
+	temperature_stop_mz: float = 0
 	mag_autosave_period: float = 0 # zero disable autosave
 	table_autosave_period: float = 1e-11 # 100 to 1000 points for 1ns to 10ns run
 
@@ -513,7 +514,15 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		AutoSave(CropLayer(m, middle_layer), %E) 
 		tableautosave(%E)
 		
-		Run(temperature_run_time)
+		// decide whether to use autostop condition
+		if temperature_run_time > 0	{
+			Run(temperature_run_time)
+		}
+		// set temperature_run_time to neg to use autostop condition
+		else {
+			mz := m.comp(2)
+			RunWhile(mz.average() > %f) 
+		}		
 		
 		// save only the middle layer
 		saveas(CropLayer(m, middle_layer),"%s") 
@@ -530,6 +539,7 @@ def writing_mumax_file(sim_param: SimulationParameters):
 			   middle_layer,
 			   sim_param.tune.mag_autosave_period,
 			   sim_param.tune.table_autosave_period,
+			   sim_param.tune.temperature_stop_mz,
 			   'after_temp_'+sim_param.sim_meta.sim_name_full))
 
 	# if production run, relax and save m
