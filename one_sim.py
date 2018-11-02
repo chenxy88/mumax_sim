@@ -222,6 +222,7 @@ class SimulationMetadata:
 	commit: str = '' # version control
 	stage: int = 0
 	loop: int = -1
+	loop_start: int = 0
 	sim_name: str = ''
 	sim_name_full: str = ''
 	walltime: str = '24:00:00'
@@ -241,12 +242,14 @@ class SimulationMetadata:
 		if self.output_dir == '':
 			self.output_dir = os.path.join(os.getcwd(), self.sim_name)
 		# convert to system specific paths
+		# e.g. /scratch/users/astar/dsi/chenxy1/textures/mumax_sim_outputs
 		self.output_dir = os.path.abspath(self.output_dir)
 
 		self.sim_id = ''.join([random.choice(string.ascii_letters+string.digits) for ch in range(8)])
 		self.sim_name_full = self.sim_name + '_st%02d_%02d' % (self.stage, self.loop)+'_'+self.sim_id
 
 		# output subdirectory contains all the results from this series of M(H)
+		# e.g. /scratch/users/astar/dsi/chenxy1/textures/mumax_sim_outputs/26m1_ar_st64
 		self.output_subdir = os.path.join(self.output_dir, (self.sim_name + '_st%02d' % self.stage))
 		self.mumax_file = os.path.join(self.output_subdir, self.sim_name_full + '.mx3')
 		self.sh_file = os.path.join(self.output_subdir, 'one_sim.sh')
@@ -324,7 +327,10 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 
 	server_script = server_script+ textwrap.dedent('''\
 	mumax3 %s
-	''' % (sim_param.sim_meta.mumax_file))
+	cp -f %s %s
+	''' % (sim_param.sim_meta.mumax_file,
+		   os.path.join(prev_sim_param.sim_meta.output_subdir,'table.txt'),
+		   os.path.join(prev_sim_param.sim_meta.output_dir, prev_sim_param.sim_meta.sim_name_full +'_table.txt') ))
 	# defining the location of the .mx3 script
 	sh_file = sim_param.sim_meta.sh_file
 
@@ -600,8 +606,8 @@ def main():
 	prev_sim_param = None
 
 	for loop, sim_param_i in enumerate(sim_params_list):
-
-		sim_param_i.sim_meta.loop = loop
+		# allows continuing from previous stage at a certain loop
+		sim_param_i.sim_meta.loop = loop + sim_params.sim_meta.loop_start
 		sim_param_i.sim_meta.previous_jobid = prev_jobid
 
 		# generate new names and calc geometry
