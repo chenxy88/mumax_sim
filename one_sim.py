@@ -329,8 +329,8 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 	mumax3 %s
 	cp -f %s %s
 	''' % (sim_param.sim_meta.mumax_file,
-		   os.path.join(prev_sim_param.sim_meta.output_subdir,'table.txt'),
-		   os.path.join(prev_sim_param.sim_meta.output_dir, prev_sim_param.sim_meta.sim_name_full +'_table.txt') ))
+		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full+'.out','table.txt'),
+		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full +'_table.txt') ))
 	# defining the location of the .mx3 script
 	sh_file = sim_param.sim_meta.sh_file
 
