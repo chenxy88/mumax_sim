@@ -327,10 +327,19 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 
 	server_script = server_script+ textwrap.dedent('''\
 	mumax3 %s
-	cp -f %s %s
+	mv -f %s %s
 	''' % (sim_param.sim_meta.mumax_file,
 		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full+'.out','table.txt'),
-		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full +'_table.txt') ))
+		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full +'.txt')))
+
+	# if applying temperature, move the after temp ovf out too
+	if sim_param.tune.thermal_fluctuation:
+		server_script = server_script + textwrap.dedent('''\
+			mv -f %s %s
+			''' % (
+		os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full + '.out', 'after_temp_'+sim_param.sim_meta.sim_name_full+'.ovf'),
+		os.path.join(sim_param.sim_meta.output_subdir, 'after_temp_'+sim_param.sim_meta.sim_name_full+'.ovf')))
+
 	# defining the location of the .mx3 script
 	sh_file = sim_param.sim_meta.sh_file
 
