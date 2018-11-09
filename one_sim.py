@@ -236,7 +236,7 @@ class SimulationMetadata:
 	sh_file: str = ''
 	production_run: bool = False
 	mumax_installed: bool = False
-	project_code: string = 'Personal'
+	project_code: str = 'Personal'
 
 	def calc_auto_parameters(self):
 		if self.output_dir == '':
@@ -252,7 +252,7 @@ class SimulationMetadata:
 		# e.g. /scratch/users/astar/dsi/chenxy1/textures/mumax_sim_outputs/26m1_ar_st64
 		self.output_subdir = os.path.join(self.output_dir, (self.sim_name + '_st%02d' % self.stage))
 		self.mumax_file = os.path.join(self.output_subdir, self.sim_name_full + '.mx3')
-		self.sh_file = os.path.join(self.output_subdir, 'one_sim.sh')
+		#self.sh_file = os.path.join(self.output_subdir, 'one_sim.sh')
 
 		self.production_run = not os.path.isfile('./not_production_run.txt')  # this will be set automatically by checking if file not_production_run.txt exist in current dir
 		status, outputstr = subprocess.getstatusoutput('mumax3')
@@ -306,7 +306,7 @@ def save_json_file(sim_param: SimulationParameters):
 	json.dump(parsed, json_file, sort_keys=True, indent=2)
 
 # Write PBS script for submission to queue
-def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParameters):
+def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParameters, last_sim: bool = True):
 	server_script = textwrap.dedent('''\
 	#!/bin/bash
 	#PBS -N %s
@@ -314,75 +314,89 @@ def writing_sh(sim_param: SimulationParameters, prev_sim_param: SimulationParame
 	#PBS -l Walltime=%s
 	#PBS -l select=1:ncpus=24:mem=24GB
 	#PBS -P %s
+	
 	module load mumax
-	''' % (sim_param.sim_meta.sim_name_full, sim_param.sim_meta.walltime, sim_param.sim_meta.project_code))
+	''' % (sim_params.sim_meta.sim_name_full, sim_params.sim_meta.walltime, sim_params.sim_meta.project_code))
 
-	# move the previous config file out
-	if sim_param.sim_meta.loop != 0 and sim_param.tune.m_h_loop_run:
-		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out',prev_sim_param.sim_meta.config_ovf_name)
+	# copy the previous config file out
+	if sim_params.sim_meta.loop != 0 and sim_params.tune.m_h_loop_run:
+		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out', prev_sim_param.sim_meta.config_ovf_name)
 		server_script = server_script + textwrap.dedent('''\
-		
 		cp -f %s %s
-		''' % (prev_output_config, sim_param.sim_meta.output_subdir))
+		''' % (prev_output_config, sim_params.sim_meta.output_subdir))
 
+	# .out subsubdir autocreated by mumax
+	out_subsubdir = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.out')
+
+	# move out the table and ovf (after relax) for easy harvesting
 	server_script = server_script+ textwrap.dedent('''\
 	mumax3 %s
 	mv -f %s %s
-	''' % (sim_param.sim_meta.mumax_file,
-		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full+'.out','table.txt'),
-		   os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full +'.txt')))
+	mv -f %s %s 
+	''' % (sim_params.sim_meta.mumax_file,
+		   os.path.join(out_subsubdir, 'table.txt'),
+		   os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt'),
+		   os.path.join(out_subsubdir, sim_params.sim_meta.sim_name_full + '.ovf'),
+		   os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.ovf')))
 
 	# if applying temperature, move the after temp ovf out too
-	if sim_param.tune.thermal_fluctuation:
+	if sim_params.tune.thermal_fluctuation:
 		server_script = server_script + textwrap.dedent('''\
 			mv -f %s %s
 			''' % (
-		os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.sim_name_full + '.out', 'after_temp_'+sim_param.sim_meta.sim_name_full+'.ovf'),
-		os.path.join(sim_param.sim_meta.output_subdir, 'after_temp_'+sim_param.sim_meta.sim_name_full+'.ovf')))
+		os.path.join(out_subsubdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf'),
+		os.path.join(sim_params.sim_meta.output_subdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf')))
+
+	# set up job chainning if this is an m_h loop
+	if sim_params.tune.m_h_loop_run and not last_sim:
+		# submit the next job
+		next_sh_file = os.path.join(sim_params.sim_meta.output_subdir, 'one_sim_st%02d_%02d.sh' % (sim_params.sim_meta.stage, sim_params.sim_meta.loop+1))
+		server_script = server_script + textwrap.dedent('''\
+			qsub %s
+			''' % next_sh_file)
 
 	# defining the location of the .mx3 script
-	sh_file = sim_param.sim_meta.sh_file
+	sim_params.sim_meta.sh_file = os.path.join(sim_params.sim_meta.output_subdir, 'one_sim_st%02d_%02d.sh' % (sim_params.sim_meta.stage, sim_params.sim_meta.loop))
 
 	# opening and saving it
-	executable_file = open(sh_file, "w")
+	executable_file = open(sim_params.sim_meta.sh_file, "w")
 	executable_file.write(server_script)
 	executable_file.close()
 
 	return 0
 
 # submit the job to PBS
-def submit_sh(sim_param: SimulationParameters):
-	if os.path.isfile(sim_param.sim_meta.sh_file):
-		if sim_param.sim_meta.loop == 0 or not sim_param.tune.m_h_loop_run:
-			# first step
-			qsub_params = ['qsub',
-						   '-o',sim_param.sim_meta.output_subdir,
-						   '-e',sim_param.sim_meta.output_subdir,
-						   sim_param.sim_meta.sh_file]
-			jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
-			# the previous_jobid is saved to sim_param, which is then extracted in the main loop
-			sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
+def submit_sh(sim_params: SimulationParameters):
+	if os.path.isfile(sim_params.sim_meta.sh_file):
+		# if sim_param.sim_meta.loop == 0 or not sim_param.tune.m_h_loop_run:
+		qsub_params = ['qsub',
+					   '-o', sim_params.sim_meta.output_subdir,
+					   '-e', sim_params.sim_meta.output_subdir,
+					   sim_params.sim_meta.sh_file]
+		jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
+		# the previous_jobid is saved to sim_param, which is then extracted in the main loop
+		# sim_params.sim_meta.previous_jobid = jobid_str.split('.')[0]
 
-		else:
-			# subsequent steps will only start upon completion of previous
-			qsub_params = ['qsub',
-						   '-o', sim_param.sim_meta.output_subdir,
-						   '-e', sim_param.sim_meta.output_subdir,
-						   '-W','depend=afterok:%s'%sim_param.sim_meta.previous_jobid,
-						   sim_param.sim_meta.sh_file]
-			jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
-			sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
+		# else:
+		# 	# subsequent steps will only start upon completion of previous
+		# 	qsub_params = ['qsub',
+		# 				   '-o', sim_param.sim_meta.output_subdir,
+		# 				   '-e', sim_param.sim_meta.output_subdir,
+		# 				   '-W','depend=afterok:%s'%sim_param.sim_meta.previous_jobid,
+		# 				   sim_param.sim_meta.sh_file]
+		# 	jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
+		# 	sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
 	return 0
 
-def run_n_convert_mumax(sim_param: SimulationParameters):
-	if os.path.isfile(sim_param.sim_meta.mumax_file):
-		os.system('mumax3 %s ' % sim_param.sim_meta.mumax_file)
-		# move output file to current directory
-		os.system('mv %s/*.ovf %s' % (os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + '.out'), sim_param.sim_meta.output_dir))
-		# os.system('mumax3-convert -vtk binary %s/*.ovf ' % (sim_param.sim_name_full + '.out'))
+# def run_n_convert_mumax(sim_param: SimulationParameters):
+# 	if os.path.isfile(sim_param.sim_meta.mumax_file):
+# 		os.system('mumax3 %s ' % sim_param.sim_meta.mumax_file)
+# 		# move output file to current directory
+# 		os.system('mv %s/*.ovf %s' % (os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + '.out'), sim_param.sim_meta.output_dir))
+# 		# os.system('mumax3-convert -vtk binary %s/*.ovf ' % (sim_param.sim_name_full + '.out'))
 
 # write mumax3 script
-def writing_mumax_file(sim_param: SimulationParameters):
+def writing_mumax_file(sim_params: SimulationParameters):
 
 	mumax_commands = textwrap.dedent('''\
 	Mega :=1e6
@@ -466,23 +480,23 @@ def writing_mumax_file(sim_param: SimulationParameters):
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
 	
-	''' % (sim_param.mat_scaled.exchange, sim_param.mat_scaled.mag_sat, sim_param.mat_scaled.anistropy_uni, sim_param.mat_scaled.dmi_bulk, sim_param.mat_scaled.dmi_interface,
+	''' % (sim_params.mat_scaled.exchange, sim_params.mat_scaled.mag_sat, sim_params.mat_scaled.anistropy_uni, sim_params.mat_scaled.dmi_bulk, sim_params.mat_scaled.dmi_interface,
 
-		   sim_param.mat_scaled.landau_damping, sim_param.tune.external_Bfield,
+		   sim_params.mat_scaled.landau_damping, sim_params.tune.external_Bfield,
 
-		   sim_param.geom.phy_size.x, sim_param.geom.phy_size.y, sim_param.geom.phy_size.z,
+		   sim_params.geom.phy_size.x, sim_params.geom.phy_size.y, sim_params.geom.phy_size.z,
 
-		   sim_param.geom.grid_cell_count.x, sim_param.geom.grid_cell_count.y, sim_param.geom.grid_cell_count.z,
+		   sim_params.geom.grid_cell_count.x, sim_params.geom.grid_cell_count.y, sim_params.geom.grid_cell_count.z,
 
-		   sim_param.geom.pbc.x, sim_param.geom.pbc.y, sim_param.geom.pbc.z,
+		   sim_params.geom.pbc.x, sim_params.geom.pbc.y, sim_params.geom.pbc.z,
 
-		   sim_param.geom.z_single_rep_thickness, sim_param.geom.z_layer_rep_num,
+		   sim_params.geom.z_single_rep_thickness, sim_params.geom.z_layer_rep_num,
 
-		   sim_param.mat_scaled.interlayer_exchange))
+		   sim_params.mat_scaled.interlayer_exchange))
 
-	if (sim_param.sim_meta.loop == 0 and not sim_param.tune.start_series_with_prev_mag) or not sim_param.tune.m_h_loop_run:
+	if (sim_params.sim_meta.loop == 0 and not sim_params.tune.start_series_with_prev_mag) or not sim_params.tune.m_h_loop_run:
 
-		if sim_param.tune.uniform_mag_initial:
+		if sim_params.tune.uniform_mag_initial:
 			# start with uniform magnetisation for the first field
 			mumax_commands = mumax_commands + textwrap.dedent('''\
 			// initialise with +z uniform mag since M(H) loop with start at saturation
@@ -511,11 +525,11 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		m.LoadFile("%s")
 		tablesave()
 		
-		''' %(os.path.join(sim_param.sim_meta.output_subdir, sim_param.sim_meta.config_ovf_name)))
+		''' % (os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.config_ovf_name)))
 
-	middle_layer = (math.ceil(sim_param.geom.z_layer_rep_num / 2) - 1) * sim_param.geom.z_single_rep_thickness
+	middle_layer = (math.ceil(sim_params.geom.z_layer_rep_num / 2) - 1) * sim_params.geom.z_single_rep_thickness
 
-	if sim_param.tune.thermal_fluctuation:
+	if sim_params.tune.thermal_fluctuation:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
 		SetSolver(2) // Heun
@@ -547,17 +561,17 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		Temp = 0 // turn off temperature
 
 		''' % (rand.randrange(0,2**32),
-			   sim_param.tune.temperature_run_dt,
-			   sim_param.tune.temperature,
-			   sim_param.tune.temperature_run_time,
+			   sim_params.tune.temperature_run_dt,
+			   sim_params.tune.temperature,
+			   sim_params.tune.temperature_run_time,
 			   middle_layer,
-			   sim_param.tune.mag_autosave_period,
-			   sim_param.tune.table_autosave_period,
-			   sim_param.tune.temperature_stop_mz,
-			   'after_temp_'+sim_param.sim_meta.sim_name_full))
+			   sim_params.tune.mag_autosave_period,
+			   sim_params.tune.table_autosave_period,
+			   sim_params.tune.temperature_stop_mz,
+			   'after_temp_' + sim_params.sim_meta.sim_name_full))
 
 	# if production run, relax and save m
-	if sim_param.sim_meta.production_run is True:
+	if sim_params.sim_meta.production_run is True:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		MinimizerStop = 1e-6
 		relax()			// high-energy states best minimized by relax()
@@ -565,20 +579,20 @@ def writing_mumax_file(sim_param: SimulationParameters):
 		// save only the middle layer
 		saveas(CropLayer(m, %d),"%s") 
 		tablesave()
-		''' %(sim_param.sim_meta.config_ovf_name, middle_layer, sim_param.sim_meta.sim_name_full))
+		''' % (sim_params.sim_meta.config_ovf_name, middle_layer, sim_params.sim_meta.sim_name_full))
 
 	# if not production run, just save inital mag
 	else:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// save only the middle layer
 		saveas(CropLayer(m, middle_layer),"%s") 
-		'''%(sim_param.sim_meta.sim_name_full))
+		''' % (sim_params.sim_meta.sim_name_full))
 
 	# defining the location of the .mx3 script
 	# executable = os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + ".mx3")
 
 	# opening and saving it
-	mumax_file = open(sim_param.sim_meta.mumax_file, "w")
+	mumax_file = open(sim_params.sim_meta.mumax_file, "w")
 	mumax_file.write(mumax_commands)
 	mumax_file.close()
 
@@ -598,6 +612,7 @@ def main():
 
 	# generate list of simulations based on main input
 	sim_params_list = sim_params.generate_sims()
+	sim_params_list_len = len(sim_params_list)
 
 	# this will check that the only array is that of external_Bfield
 	if sim_params.tune.m_h_loop_run and  len(sim_params_list) != len(sim_params.tune.external_Bfield):
@@ -614,6 +629,7 @@ def main():
 	prev_jobid = ''
 	prev_sim_param = None
 
+	# generate .mx3 and .sh files
 	for loop, sim_param_i in enumerate(sim_params_list):
 		# allows continuing from previous stage at a certain loop
 		sim_param_i.sim_meta.loop = loop + sim_params.sim_meta.loop_start
@@ -631,18 +647,23 @@ def main():
 
 		# these are written to the subdirectory
 		writing_mumax_file(sim_param_i)
-		writing_sh(sim_param_i, prev_sim_param)
-
-		if sim_param_i.sim_meta.production_run:
-			# the real deal, write sh scripts
-			submit_sh(sim_param_i)
-		else:
-			if sim_param_i.sim_meta.mumax_installed:
-				run_n_convert_mumax(sim_param_i)
+		writing_sh(sim_param_i, prev_sim_param, last_sim=loop==sim_params_list_len-1)
 
 		# save the prev_jobid
 		prev_jobid = sim_param_i.sim_meta.previous_jobid
 		prev_sim_param = sim_param_i
+
+	# submit .sh files to queue
+	if sim_params.sim_meta.production_run:
+		# check if this is a m_h loop run
+		if not sim_params.tune.m_h_loop_run:
+			# submit all jobs at once
+			for loop, sim_param_i in enumerate(sim_params_list):
+				submit_sh(sim_param_i)
+		# m_h loop run, submit just the first job, and the jobs will chain
+		else:
+			submit_sh(sim_params_list[0])
+
 
 	return
 
