@@ -271,6 +271,7 @@ class TuningParameters:
 	temperature_run_time: float = 5e-10
 	temperature_run_dt: float = 1e-15
 	temperature_stop_mz: float = 0
+	temperature_solver: int = 2
 	mag_autosave_period: float = 0 # zero disable autosave
 	table_autosave_period: float = 1e-11 # 100 to 1000 points for 1ns to 10ns run
 
@@ -532,7 +533,7 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	if sim_params.tune.thermal_fluctuation:
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
-		SetSolver(2) // Heun
+		SetSolver(%d) // Solver for run with thermal fluctuations
 		ThermSeed(%d) // Set a random seed for thermal noise 
 		FixDt = %E
 		Temp = %f
@@ -560,7 +561,8 @@ def writing_mumax_file(sim_params: SimulationParameters):
 		FixDt = 0 // turn off fixed time step
 		Temp = 0 // turn off temperature
 
-		''' % (rand.randrange(0,2**32),
+		''' % (sim_params.tune.temperature_solver,
+			   rand.randrange(0,2**32),
 			   sim_params.tune.temperature_run_dt,
 			   sim_params.tune.temperature,
 			   sim_params.tune.temperature_run_time,
