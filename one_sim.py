@@ -67,7 +67,7 @@ def convert_obj_to_json_recursively(obj):
 
 		val = obj_dict[key]
 		# if val is an object
-		if (hasattr(val, '__dict__')):
+		if hasattr(val, '__dict__'):
 			json_str +=  '"' + key+'":' + convert_obj_to_json_recursively(val)
 		else:
 			json_str += '"' + key+'":' + json.dumps(val)
@@ -81,7 +81,7 @@ def outer_product_object_list(obj, start_ind = 0):
 	# holds individuals items of the list instead
 	# if the object contains multiple lists, a list of objects equivalent to the outerproduct of
 	# those lists are returned
-	# this works with nest objects and but does NOT work with NESTED LISTS by design (let's not use nested lists)
+	# this works with nest objects and but does not open/flatten nested list
 
 	assert (hasattr(obj, '__dict__'))
 	obj_dict = obj.__dict__
@@ -96,6 +96,7 @@ def outer_product_object_list(obj, start_ind = 0):
 		# if found a nested object
 		if hasattr(val, '__dict__'):
 			# lets open up this object and explore
+
 			sub_obj = outer_product_object_list(val)
 			# if it turns out that this object contain lists
 			if isinstance(sub_obj, list):
@@ -106,10 +107,10 @@ def outer_product_object_list(obj, start_ind = 0):
 				for (ind_i, val_i) in enumerate(sub_obj):
 					obj_tmp = deepcopy(obj)
 					setattr(obj_tmp, key, val_i)
-					result[ind_i] = outer_product_object_list(obj_tmp, start_ind+1) #plus one here is impt
+					result[ind_i] = outer_product_object_list(obj_tmp, ind+1) #plus one here is impt
 
 				return result
-
+			#
 			# if the object does not contain any lists, don't bother with it
 			else:
 				pass
@@ -123,7 +124,7 @@ def outer_product_object_list(obj, start_ind = 0):
 				obj_tmp = deepcopy(obj)
 				# replace list with a single value
 				setattr(obj_tmp, key, val_i)
-				result[ind_i] = outer_product_object_list(obj_tmp, start_ind+1) #plus one -> do not open up nested list
+				result[ind_i] = outer_product_object_list(obj_tmp, ind+1) #plus one -> do not open up nested list
 
 			return  result
 
@@ -267,6 +268,8 @@ class TuningParameters:
 	uniform_mag_initial: bool = True
 	# whether or not previous config is copied out to common, and next run starts with prev config
 	m_h_loop_run: bool = True
+	# number of field points to calculate per run
+	m_h_loop_points_per_run: int = 10
 	temperature: float = 300
 	temperature_run_time: float = 5e-10
 	temperature_run_dt: float = 1e-15
@@ -320,7 +323,7 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	''' % (sim_params.sim_meta.sim_name_full, sim_params.sim_meta.walltime, sim_params.sim_meta.project_code))
 
 	# copy the previous config file out
-	if sim_params.sim_meta.loop != 0 and sim_params.tune.m_h_loop_run:
+	if prev_sim_param is not None and sim_params.tune.m_h_loop_run:
 		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out', prev_sim_param.sim_meta.config_ovf_name)
 		server_script = server_script + textwrap.dedent('''\
 		cp -f %s %s
@@ -337,16 +340,16 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	''' % (sim_params.sim_meta.mumax_file,
 		   os.path.join(out_subsubdir, 'table.txt'),
 		   os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt'),
-		   os.path.join(out_subsubdir, sim_params.sim_meta.sim_name_full + '.ovf'),
-		   os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.ovf')))
+		   os.path.join(out_subsubdir, sim_params.sim_meta.sim_name_full + '*'),
+		   sim_params.sim_meta.output_subdir))
 
 	# if applying temperature, move the after temp ovf out too
-	if sim_params.tune.thermal_fluctuation:
-		server_script = server_script + textwrap.dedent('''\
-			mv -f %s %s
-			''' % (
-		os.path.join(out_subsubdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf'),
-		os.path.join(sim_params.sim_meta.output_subdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf')))
+	# if sim_params.tune.thermal_fluctuation:
+	# 	server_script = server_script + textwrap.dedent('''\
+	# 		mv -f %s %s
+	# 		''' % (
+	# 	os.path.join(out_subsubdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf'),
+	# 	os.path.join(sim_params.sim_meta.output_subdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf')))
 
 	# set up job chainning if this is an m_h loop
 	if sim_params.tune.m_h_loop_run and not last_sim:
@@ -399,6 +402,8 @@ def submit_sh(sim_params: SimulationParameters):
 # write mumax3 script
 def writing_mumax_file(sim_params: SimulationParameters):
 
+	middle_layer = (math.ceil(sim_params.geom.z_layer_rep_num / 2) - 1) * sim_params.geom.z_single_rep_thickness
+
 	mumax_commands = textwrap.dedent('''\
 	Mega :=1e6
 	Pico :=1e-12
@@ -435,8 +440,7 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	
 	// Micromagnetic parameters for all regions
 	alpha  =%f		 // Damping
-	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 
-	B_ext = vector(0, 0, %f) //in Teslas
+	AnisU = vector(0, 0, 1) //Uniaxial anisotropy direction 	
 	
 	// Physical size
 	size_X	:=%f //sim_param.phy_size.x
@@ -481,9 +485,15 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	tableAdd(ext_topologicalcharge)
 	OutputFormat = OVF1_TEXT
 	
+	middle_layer := %d
+	
+	// save the middle slice of the config	
+	AutoSave(CropLayer(m, middle_layer), %E) 
+	tableautosave(%E)
+	
 	''' % (sim_params.mat_scaled.exchange, sim_params.mat_scaled.mag_sat, sim_params.mat_scaled.anistropy_uni, sim_params.mat_scaled.dmi_bulk, sim_params.mat_scaled.dmi_interface,
 
-		   sim_params.mat_scaled.landau_damping, sim_params.tune.external_Bfield,
+		   sim_params.mat_scaled.landau_damping,
 
 		   sim_params.geom.phy_size.x, sim_params.geom.phy_size.y, sim_params.geom.phy_size.z,
 
@@ -493,112 +503,135 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 		   sim_params.geom.z_single_rep_thickness, sim_params.geom.z_layer_rep_num,
 
-		   sim_params.mat_scaled.interlayer_exchange))
+		   sim_params.mat_scaled.interlayer_exchange,
 
+		   middle_layer,
+
+		   sim_params.tune.mag_autosave_period, sim_params.tune.table_autosave_period))
+
+	# set initial magnetisation
 	if (sim_params.sim_meta.loop == 0 and not sim_params.tune.start_series_with_prev_mag) or not sim_params.tune.m_h_loop_run:
 
 		if sim_params.tune.uniform_mag_initial:
 			# start with uniform magnetisation for the first field
-			mumax_commands = mumax_commands + textwrap.dedent('''\
+			mumax_commands += textwrap.dedent('''\
 			// initialise with +z uniform mag since M(H) loop with start at saturation
 			m.setRegion(0, Uniform(0, 0, 0))
 			m.setRegion(1, Uniform(0, 0, 1))
 			m.setRegion(2, Uniform(0, 0, 1))
-			tablesave()
 
 			''')
 
 		else:
 			# start with random magnetisation for the first field
-			mumax_commands = mumax_commands+textwrap.dedent('''\
+			mumax_commands += textwrap.dedent('''\
 			// initialise with random magnetisation
 			m.setRegion(0, Uniform(0, 0, 0))
 			m.setRegion(1, RandomMagSeed(%d))
 			m.setRegion(2, RandomMagSeed(%d))
-			tablesave()			
 
 			''' %(rand.randrange(0,2**32), rand.randrange(0,2**32)))
 
 	else:
 		# load previous magnetisation for subsequent fields
-		mumax_commands = mumax_commands + textwrap.dedent('''\
+		mumax_commands += textwrap.dedent('''\
 		// load the previous magnetisation
 		m.LoadFile("%s")
-		tablesave()
 		
 		''' % (os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.config_ovf_name)))
 
-	middle_layer = (math.ceil(sim_params.geom.z_layer_rep_num / 2) - 1) * sim_params.geom.z_single_rep_thickness
-
-	if sim_params.tune.thermal_fluctuation:
+	# set magnetic field if external_Bfield is not a list
+	if not isinstance(sim_params.tune.external_Bfield, list):
 		mumax_commands = mumax_commands + textwrap.dedent('''\
-		// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
-		SetSolver(%d) // Solver for run with thermal fluctuations
-		ThermSeed(%d) // Set a random seed for thermal noise 
-		FixDt = %E
-		Temp = %f
-		temperature_run_time := %E		
-		
-		middle_layer := %d
-		// save the middle slice of the config	
-		AutoSave(CropLayer(m, middle_layer), %E) 
-		tableautosave(%E)
-		
-		// decide whether to use autostop condition
-		// set temperature_run_time to neg to use autostop condition
-		if temperature_run_time > 0	{
-			Run(temperature_run_time)
-		} else {
-			mz := m.comp(2)
-			RunWhile(mz.average() > %f) 
-		}		
-		
-		// save only the middle layer
-		saveas(CropLayer(m, middle_layer),"%s") 
-		
-		// change back to normal settings
-		SetSolver(5) // back to default solver
-		FixDt = 0 // turn off fixed time step
-		Temp = 0 // turn off temperature
+		B_ext = vector(0, 0, %f) //in Teslas
+		''' % (sim_params.tune.external_Bfield))
 
-		''' % (sim_params.tune.temperature_solver,
-			   rand.randrange(0,2**32),
-			   sim_params.tune.temperature_run_dt,
-			   sim_params.tune.temperature,
-			   sim_params.tune.temperature_run_time,
-			   middle_layer,
-			   sim_params.tune.mag_autosave_period,
-			   sim_params.tune.table_autosave_period,
-			   sim_params.tune.temperature_stop_mz,
-			   'after_temp_' + sim_params.sim_meta.sim_name_full))
+	# set temperature
+	# if sim_params.tune.thermal_fluctuation:
+	# 	mumax_commands += textwrap.dedent('''\
+	# 	// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
+	# 	SetSolver(%d) // Solver for run with thermal fluctuations
+	# 	ThermSeed(%d) // Set a random seed for thermal noise
+	# 	FixDt = %E
+	# 	Temp = %f
+	# 	temperature_run_time := %E
+	# 	''' % (sim_params.tune.temperature_solver,
+	# 		   rand.randrange(0,2**32),
+	# 		   sim_params.tune.temperature_run_dt,
+	# 		   sim_params.tune.temperature,
+	# 		   sim_params.tune.temperature_run_time))
 
-	# if production run, relax and save m
-	if sim_params.sim_meta.production_run is True:
-		mumax_commands = mumax_commands + textwrap.dedent('''\
-		MinimizerStop = 1e-6
-		relax()			// high-energy states best minimized by relax()
-		saveas(m,"%s")
-		// save only the middle layer
-		saveas(CropLayer(m, %d),"%s") 
-		tablesave()
-		''' % (sim_params.sim_meta.config_ovf_name, middle_layer, sim_params.sim_meta.sim_name_full))
+	run_and_relax_commands = ''
 
-	# if not production run, just save inital mag
+	if sim_params.tune.m_h_loop_run:
+		for ind, Bfield in enumerate(sim_params.tune.external_Bfield):
+
+			# set Bfield for each field point
+			run_and_relax_commands += textwrap.dedent('''\
+			
+			//---------------Set new field point for MH loop---------------
+			B_ext = vector(0, 0, %f) //in Teslas
+			'''%Bfield)
+
+			# run thermal fluctuations
+			if sim_params.tune.thermal_fluctuation:
+				run_and_relax_commands += run_thermal_fluctuations_commands(sim_params, '_'+str(ind))
+
+			# relax
+			run_and_relax_commands += relax_commands(sim_params, '_'+str(ind))
+
 	else:
-		mumax_commands = mumax_commands + textwrap.dedent('''\
-		// save only the middle layer
-		saveas(CropLayer(m, middle_layer),"%s") 
-		''' % (sim_params.sim_meta.sim_name_full))
+		run_and_relax_commands = relax_commands(sim_params)
 
-	# defining the location of the .mx3 script
-	# executable = os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + ".mx3")
-
+	mumax_commands += run_and_relax_commands
 	# opening and saving it
 	mumax_file = open(sim_params.sim_meta.mumax_file, "w")
 	mumax_file.write(mumax_commands)
 	mumax_file.close()
 
-	return 0
+
+def relax_commands(sim_params: SimulationParameters, counter:str = ''):
+	return textwrap.dedent('''\
+	
+	// change back to normal settings
+	SetSolver(3) // back to default solver for relax
+	FixDt = 0 // turn off fixed time step
+	Temp = 0 // turn off temperature
+	relax()			// high-energy states best minimized by relax()
+	saveas(m,"%s")	
+	// save only the middle layer
+	saveas(CropLayer(m, middle_layer),"%s") 
+	tablesave()
+	
+	''' % (sim_params.sim_meta.config_ovf_name,
+		   sim_params.sim_meta.sim_name_full+counter))
+
+def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:str = ''):
+	return textwrap.dedent('''\
+	
+	// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
+	SetSolver(%d) // Solver for run with thermal fluctuations	
+	ThermSeed(%d) // Set a random seed for thermal noise 
+	
+	FixDt = %E	
+	Temp = %f
+	temperature_run_time := %E		
+
+	// decide whether to use autostop condition
+	// set temperature_run_time to neg to use autostop condition
+	if temperature_run_time > 0	{
+		Run(temperature_run_time)
+	} else {
+		mz := m.comp(2)
+		RunWhile(mz.average() > %f) 
+	}		
+
+	// save only the middle layer
+	saveas(CropLayer(m, middle_layer),"%s") 
+
+	''' % (sim_params.tune.temperature_solver, rand.randrange(0, 2 ** 32),
+		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature, sim_params.tune.temperature_run_time,
+		   sim_params.tune.temperature_stop_mz, sim_params.sim_meta.sim_name_full +'_after_temp' + counter))
 
 #--------------- main ---------------#
 
@@ -611,6 +644,23 @@ def main():
 
 	# generate simulation full name
 	sim_params.sim_meta.calc_auto_parameters()
+
+	# if mh loop run, convert list of magnetic fields into a list of lists of magnetic fields
+	# outer_product_object_list will not flatten nested list
+	if sim_params.tune.m_h_loop_run:
+		tmp_list_of_lists = []
+		len_field_arr = len(sim_params.tune.external_Bfield)
+		for i in range(int(math.ceil(len_field_arr/sim_params.tune.m_h_loop_points_per_run))):
+			# segment of external_Bfield to put in nested list
+			ind_start = i*sim_params.tune.m_h_loop_points_per_run
+			ind_end = (i+1)*sim_params.tune.m_h_loop_points_per_run
+			# check for out of bounds
+			if ind_end > len_field_arr:
+				ind_end = len_field_arr
+			# append to nested list
+			tmp_list_of_lists.append(sim_params.tune.external_Bfield[ind_start:ind_end])
+
+		sim_params.tune.external_Bfield = tmp_list_of_lists
 
 	# generate list of simulations based on main input
 	sim_params_list = sim_params.generate_sims()
