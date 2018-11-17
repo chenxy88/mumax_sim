@@ -491,6 +491,10 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	AutoSave(CropLayer(m, middle_layer), %E) 
 	tableautosave(%E)
 	
+	// define some variables here which may or may not be used later
+	temperature_run_time := %E	
+	mz := m.comp(2)
+	
 	''' % (sim_params.mat_scaled.exchange, sim_params.mat_scaled.mag_sat, sim_params.mat_scaled.anistropy_uni, sim_params.mat_scaled.dmi_bulk, sim_params.mat_scaled.dmi_interface,
 
 		   sim_params.mat_scaled.landau_damping,
@@ -507,7 +511,9 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 		   middle_layer,
 
-		   sim_params.tune.mag_autosave_period, sim_params.tune.table_autosave_period))
+		   sim_params.tune.mag_autosave_period, sim_params.tune.table_autosave_period,
+
+		   sim_params.tune.temperature_run_time))
 
 	# set initial magnetisation
 	if (sim_params.sim_meta.loop == 0 and not sim_params.tune.start_series_with_prev_mag) or not sim_params.tune.m_h_loop_run:
@@ -614,15 +620,13 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 	ThermSeed(%d) // Set a random seed for thermal noise 
 	
 	FixDt = %E	
-	Temp = %f
-	temperature_run_time := %E		
+	Temp = %f		
 
 	// decide whether to use autostop condition
 	// set temperature_run_time to neg to use autostop condition
 	if temperature_run_time > 0	{
 		Run(temperature_run_time)
-	} else {
-		mz := m.comp(2)
+	} else {		
 		RunWhile(mz.average() > %f) 
 	}		
 
@@ -630,7 +634,7 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 	saveas(CropLayer(m, middle_layer),"%s") 
 
 	''' % (sim_params.tune.temperature_solver, rand.randrange(0, 2 ** 32),
-		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature, sim_params.tune.temperature_run_time,
+		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature,
 		   sim_params.tune.temperature_stop_mz, sim_params.sim_meta.sim_name_full +'_after_temp' + counter))
 
 #--------------- main ---------------#
