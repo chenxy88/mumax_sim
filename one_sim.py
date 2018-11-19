@@ -270,10 +270,12 @@ class TuningParameters:
 	m_h_loop_run: bool = True
 	# number of field points to calculate per run
 	m_h_loop_points_per_run: int = 10
-	temperature: float = 300
+	temperature: float = 900
+	# str is used in order to avoid outer_product of array
+	temperature_annealing_temp: str = '600,300'
+	temperature_annealing_time: float = 1e-9
 	temperature_run_time: float = 5e-10
 	temperature_run_dt: float = 1e-15
-	temperature_stop_mz: float = 0
 	temperature_solver: int = 2
 	mag_autosave_period: float = 0 # zero disable autosave
 	table_autosave_period: float = 1e-11 # 100 to 1000 points for 1ns to 10ns run
@@ -579,12 +581,15 @@ def writing_mumax_file(sim_params: SimulationParameters):
 			B_ext = vector(0, 0, %f) //in Teslas
 			'''%Bfield)
 
+			# counter str is the loop number, followed by the field in mT
+			counter_str =  '_%d_%.0fmT' %(ind, Bfield*1e3)
+
 			# run thermal fluctuations
 			if sim_params.tune.thermal_fluctuation:
-				run_and_relax_commands += run_thermal_fluctuations_commands(sim_params, '_'+str(ind))
+				run_and_relax_commands += run_thermal_fluctuations_commands(sim_params, counter_str)
 
 			# relax
-			run_and_relax_commands += relax_commands(sim_params, '_'+str(ind))
+			run_and_relax_commands += relax_commands(sim_params, counter_str)
 
 	else:
 		run_and_relax_commands = relax_commands(sim_params)
@@ -613,29 +618,37 @@ def relax_commands(sim_params: SimulationParameters, counter:str = ''):
 		   sim_params.sim_meta.sim_name_full+counter))
 
 def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:str = ''):
-	return textwrap.dedent('''\
+
+	thermal_run_commands = textwrap.dedent('''\
 	
 	// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
 	SetSolver(%d) // Solver for run with thermal fluctuations	
 	ThermSeed(%d) // Set a random seed for thermal noise 
 	
-	FixDt = %E	
-	Temp = %f		
+	FixDt = %E
+	Temp = %f
 
-	// decide whether to use autostop condition
-	// set temperature_run_time to neg to use autostop condition
-	if temperature_run_time > 0	{
-		Run(temperature_run_time)
-	} else {		
-		RunWhile(mz.average() > %f) 
-	}		
+	Run(temperature_run_time)		
 
+	''' % (sim_params.tune.temperature_solver, rand.randrange(0, 2 ** 32),
+		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature))
+
+	temp_anneal_list = sim_params.tune.temperature_annealing_temp.split(',')
+	if len(temp_anneal_list) > 0:
+		for temp in temp_anneal_list:
+			thermal_run_commands += textwrap.dedent('''\
+				Temp = %.0f
+				Run(%E)
+				
+			'''%(float(temp), sim_params.tune.temperature_annealing_time))
+
+	thermal_run_commands += textwrap.dedent('''\
 	// save only the middle layer
 	saveas(CropLayer(m, middle_layer),"%s") 
 
-	''' % (sim_params.tune.temperature_solver, rand.randrange(0, 2 ** 32),
-		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature,
-		   sim_params.tune.temperature_stop_mz, sim_params.sim_meta.sim_name_full +'_after_temp' + counter))
+	''' % (sim_params.sim_meta.sim_name_full +'_after_temp' + counter))
+
+	return thermal_run_commands
 
 #--------------- main ---------------#
 
