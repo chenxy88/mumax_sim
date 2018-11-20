@@ -272,7 +272,7 @@ class TuningParameters:
 	m_h_loop_points_per_run: int = 10
 	temperature: float = 900
 	# str is used in order to avoid outer_product of array
-	temperature_annealing_temp: str = '600,300'
+	temperature_annealing_temp: str = ''
 	temperature_annealing_time: float = 1e-9
 	temperature_run_time: float = 5e-10
 	temperature_run_dt: float = 1e-15
@@ -325,11 +325,11 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	''' % (sim_params.sim_meta.sim_name_full, sim_params.sim_meta.walltime, sim_params.sim_meta.project_code))
 
 	# copy the previous config file out
-	if prev_sim_param is not None and sim_params.tune.m_h_loop_run:
-		prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out', prev_sim_param.sim_meta.config_ovf_name)
-		server_script = server_script + textwrap.dedent('''\
-		cp -f %s %s
-		''' % (prev_output_config, sim_params.sim_meta.output_subdir))
+	# if prev_sim_param is not None and sim_params.tune.m_h_loop_run:
+	# 	prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out', prev_sim_param.sim_meta.config_ovf_name)
+	# 	server_script = server_script + textwrap.dedent('''\
+	# 	cp -f %s %s
+	# 	''' % (prev_output_config, sim_params.sim_meta.output_subdir))
 
 	# .out subsubdir autocreated by mumax
 	out_subsubdir = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.out')
@@ -337,12 +337,12 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	# move out the table and ovf (after relax) for easy harvesting
 	server_script = server_script+ textwrap.dedent('''\
 	mumax3 %s
-	mv -f %s %s
+	cp -f %s %s
 	mv -f %s %s 
 	''' % (sim_params.sim_meta.mumax_file,
 		   os.path.join(out_subsubdir, 'table.txt'),
 		   os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt'),
-		   os.path.join(out_subsubdir, sim_params.sim_meta.sim_name_full + '*'),
+		   os.path.join(out_subsubdir, '*.ovf'),
 		   sim_params.sim_meta.output_subdir))
 
 	# if applying temperature, move the after temp ovf out too
@@ -582,7 +582,7 @@ def writing_mumax_file(sim_params: SimulationParameters):
 			'''%Bfield)
 
 			# counter str is the loop number, followed by the field in mT
-			counter_str =  '_%d_%.0fmT' %(ind, Bfield*1e3)
+			counter_str =  '_%.0fmT' %(Bfield*1e3)
 
 			# run thermal fluctuations
 			if sim_params.tune.thermal_fluctuation:
@@ -590,6 +590,13 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 			# relax
 			run_and_relax_commands += relax_commands(sim_params, counter_str)
+
+		run_and_relax_commands += textwrap.dedent('''\
+		
+		// output final ovf to be loaded by the next run
+		saveas(m,"%s")
+			
+		'''%(sim_params.sim_meta.config_ovf_name))
 
 	else:
 		run_and_relax_commands = relax_commands(sim_params)
@@ -614,8 +621,8 @@ def relax_commands(sim_params: SimulationParameters, counter:str = ''):
 	saveas(CropLayer(m, middle_layer),"%s") 
 	tablesave()
 	
-	''' % (sim_params.sim_meta.config_ovf_name,
-		   sim_params.sim_meta.sim_name_full+counter))
+	''' % ('full_mag_relaxed_'+sim_params.sim_meta.sim_name_full+counter,
+		   'sliced_mag_relaxed_'+sim_params.sim_meta.sim_name_full+counter))
 
 def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:str = ''):
 
@@ -634,7 +641,7 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature))
 
 	temp_anneal_list = sim_params.tune.temperature_annealing_temp.split(',')
-	if len(temp_anneal_list) > 0:
+	if temp_anneal_list[0] != '':
 		for temp in temp_anneal_list:
 			thermal_run_commands += textwrap.dedent('''\
 				Temp = %.0f
@@ -646,7 +653,7 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 	// save only the middle layer
 	saveas(CropLayer(m, middle_layer),"%s") 
 
-	''' % (sim_params.sim_meta.sim_name_full +'_after_temp' + counter))
+	''' % ('sliced_mag_after_temp_' +sim_params.sim_meta.sim_name_full + counter))
 
 	return thermal_run_commands
 
