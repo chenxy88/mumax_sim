@@ -16,6 +16,17 @@ import random as rand
 
 # All other input parameters are expected to be single values instead of arrays
 
+# constants
+@dataclass
+class Constants:
+	full_mag_relaxed_str: str = 'full_mag_relaxed_'
+	sliced_mag_relaxed_str: str = 'sliced_mag_relaxed_'
+	sliced_mag_after_temp_str: str = 'sliced_mag_after_temp_'
+	config_ovf_str: str = 'config.ovf'
+	Bfield_mT_str: str = '_%.0fmT'
+	forc_Hr_str: str = 'Hr_%.0fmT'
+
+
 def update_obj_from_dict_recursively(some_obj, some_dict):
 	"""
 	Useful to convert nested json files into nested dataclasses
@@ -163,6 +174,18 @@ def load_json_file(input_file):
 
 	return data_loaded
 
+def find_FORC_prev_mag (path: str, ending: str):
+
+	filename_list = os.listdir(path)
+
+
+	# filter based on criteria
+	for filename in filename_list:
+		if filename.startswith(Constants.full_mag_relaxed_str) and  filename.endswith(ending):
+			return filename
+
+	return None
+
 # simple helper classes
 @dataclass
 class Vector:
@@ -232,26 +255,29 @@ class SimulationMetadata:
 	output_subdir: str = ''
 	mumax_file: str = ''
 	previous_jobid: str = ''
-	config_ovf_name: str = 'config.ovf'
+	config_ovf_path: str = ''
+	config_ovf_name: str = Constants.config_ovf_str #'config.ovf'
 
 	sh_file: str = ''
 	production_run: bool = False
 	mumax_installed: bool = False
 	project_code: str = 'Personal'
 
-	def calc_auto_parameters(self):
-		if self.output_dir == '':
-			self.output_dir = os.path.join(os.getcwd(), self.sim_name)
-		# convert to system specific paths
-		# e.g. /scratch/users/astar/dsi/chenxy1/textures/mumax_sim_outputs
-		self.output_dir = os.path.abspath(self.output_dir)
+	def calc_auto_parameters(self, autoset_output_subdir:bool = True):
+
+		if autoset_output_subdir:
+			if self.output_dir == '':
+				self.output_dir = os.path.join(os.getcwd(), self.sim_name)
+			# convert to system specific paths
+			# e.g. /scratch/users/astar/dsi/chenxy1/textures/mumax_sim_outputs
+			self.output_dir = os.path.abspath(self.output_dir)
+			self.output_subdir = os.path.join(self.output_dir, (self.sim_name + '_st%02d' % self.stage))
 
 		self.sim_id = ''.join([random.choice(string.ascii_letters+string.digits) for ch in range(8)])
 		self.sim_name_full = self.sim_name + '_st%02d_%02d' % (self.stage, self.loop)+'_'+self.sim_id
 
 		# output subdirectory contains all the results from this series of M(H)
 		# e.g. /scratch/users/astar/dsi/chenxy1/textures/mumax_sim_outputs/26m1_ar_st64
-		self.output_subdir = os.path.join(self.output_dir, (self.sim_name + '_st%02d' % self.stage))
 		self.mumax_file = os.path.join(self.output_subdir, self.sim_name_full + '.mx3')
 		#self.sh_file = os.path.join(self.output_subdir, 'one_sim.sh')
 
@@ -279,6 +305,16 @@ class TuningParameters:
 	temperature_solver: int = 2
 	mag_autosave_period: float = 0 # zero disable autosave
 	table_autosave_period: float = 1e-11 # 100 to 1000 points for 1ns to 10ns run
+	# forc related
+	forc_run: bool = False
+	# reverse field in T
+	forc_Hr: [float] = 0
+	# stopping field for minor loop, in T
+	forc_H_stop: float = 0
+	# field step in minor loop from Hr to Hstop, in T
+	forc_H_step: float = 0.01
+	# path of mag profile to load
+	forc_starting_mag_path: str = ''
 
 # all experimental parameters
 @dataclass
@@ -335,15 +371,25 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	out_subsubdir = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.out')
 
 	# move out the table and ovf (after relax) for easy harvesting
-	server_script = server_script+ textwrap.dedent('''\
-	mumax3 %s
-	cp -f %s %s
-	mv -f %s %s 
+	server_script += textwrap.dedent('''\
+	mumax3 %s	
+	mv -f  %s %s 
 	''' % (sim_params.sim_meta.mumax_file,
-		   os.path.join(out_subsubdir, 'table.txt'),
-		   os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt'),
 		   os.path.join(out_subsubdir, '*.ovf'),
 		   sim_params.sim_meta.output_subdir))
+
+	# set special table copy destination for FORC, since there is an extra layer of folder
+
+	if sim_params.tune.forc_run:
+		table_dest_path_name = os.path.join(sim_params.sim_meta.output_dir,
+											# (sim_params.sim_meta.sim_name + '_st%02d' % sim_params.sim_meta.stage),
+											sim_params.sim_meta.sim_name_full + '_'+Constants.forc_Hr_str % (sim_params.tune.forc_Hr * 1e3)+ '.txt')
+	else:
+		table_dest_path_name = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt')
+
+	server_script += textwrap.dedent('''\
+	cp -f  %s %s
+	'''%(os.path.join(out_subsubdir, 'table.txt'), table_dest_path_name))
 
 	# if applying temperature, move the after temp ovf out too
 	# if sim_params.tune.thermal_fluctuation:
@@ -358,7 +404,7 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 		# submit the next job
 		next_sh_file = os.path.join(sim_params.sim_meta.output_subdir, 'one_sim_st%02d_%02d.sh' % (sim_params.sim_meta.stage, sim_params.sim_meta.loop+1))
 		server_script = server_script + textwrap.dedent('''\
-			qsub %s
+			qsub   %s
 			''' % next_sh_file)
 
 	# defining the location of the .mx3 script
@@ -368,8 +414,6 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	executable_file = open(sim_params.sim_meta.sh_file, "w")
 	executable_file.write(server_script)
 	executable_file.close()
-
-	return 0
 
 # submit the job to PBS
 def submit_sh(sim_params: SimulationParameters):
@@ -392,14 +436,6 @@ def submit_sh(sim_params: SimulationParameters):
 		# 				   sim_param.sim_meta.sh_file]
 		# 	jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
 		# 	sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
-	return 0
-
-# def run_n_convert_mumax(sim_param: SimulationParameters):
-# 	if os.path.isfile(sim_param.sim_meta.mumax_file):
-# 		os.system('mumax3 %s ' % sim_param.sim_meta.mumax_file)
-# 		# move output file to current directory
-# 		os.system('mv %s/*.ovf %s' % (os.path.join(sim_param.sim_meta.output_dir, sim_param.sim_meta.sim_name_full + '.out'), sim_param.sim_meta.output_dir))
-# 		# os.system('mumax3-convert -vtk binary %s/*.ovf ' % (sim_param.sim_name_full + '.out'))
 
 # write mumax3 script
 def writing_mumax_file(sim_params: SimulationParameters):
@@ -542,17 +578,22 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 	else:
 		# load previous magnetisation for subsequent fields
+		# if config_ovf_path is not set, load from output_subdir
+		if sim_params.sim_meta.config_ovf_path == '':
+			sim_params.sim_meta.config_ovf_path = sim_params.sim_meta.output_subdir
+
 		mumax_commands += textwrap.dedent('''\
 		// load the previous magnetisation
 		m.LoadFile("%s")
 		
-		''' % (os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.config_ovf_name)))
+		''' % os.path.join(sim_params.sim_meta.config_ovf_path,
+						   sim_params.sim_meta.config_ovf_name))
 
 	# set magnetic field if external_Bfield is not a list
 	if not isinstance(sim_params.tune.external_Bfield, list):
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		B_ext = vector(0, 0, %f) //in Teslas
-		''' % (sim_params.tune.external_Bfield))
+		''' % sim_params.tune.external_Bfield)
 
 	# set temperature
 	# if sim_params.tune.thermal_fluctuation:
@@ -582,7 +623,7 @@ def writing_mumax_file(sim_params: SimulationParameters):
 			'''%Bfield)
 
 			# counter str is the loop number, followed by the field in mT
-			counter_str =  '_%.0fmT' %(Bfield*1e3)
+			counter_str =  Constants.Bfield_mT_str %(Bfield*1e3)
 
 			# run thermal fluctuations
 			if sim_params.tune.thermal_fluctuation:
@@ -592,11 +633,11 @@ def writing_mumax_file(sim_params: SimulationParameters):
 			run_and_relax_commands += relax_commands(sim_params, counter_str)
 
 		run_and_relax_commands += textwrap.dedent('''\
-		
+
 		// output final ovf to be loaded by the next run
 		saveas(m,"%s")
-			
-		'''%(sim_params.sim_meta.config_ovf_name))
+
+		''' % Constants.config_ovf_str)
 
 	else:
 		run_and_relax_commands = relax_commands(sim_params)
@@ -609,20 +650,26 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 
 def relax_commands(sim_params: SimulationParameters, counter:str = ''):
-	return textwrap.dedent('''\
+	commands = textwrap.dedent('''\
 	
 	// change back to normal settings
 	SetSolver(3) // back to default solver for relax
 	FixDt = 0 // turn off fixed time step
 	Temp = 0 // turn off temperature
 	relax()			// high-energy states best minimized by relax()
-	saveas(m,"%s")	
+	
 	// save only the middle layer
 	saveas(CropLayer(m, middle_layer),"%s") 
 	tablesave()
 	
-	''' % ('full_mag_relaxed_'+sim_params.sim_meta.sim_name_full+counter,
-		   'sliced_mag_relaxed_'+sim_params.sim_meta.sim_name_full+counter))
+	''' % (Constants.sliced_mag_relaxed_str+sim_params.sim_meta.sim_name_full+counter))
+
+	# do not save full mag for FORC run, will be way too large
+	if not sim_params.tune.forc_run:
+		commands += textwrap.dedent('''\
+		saveas(m,"%s")	
+		'''% (Constants.full_mag_relaxed_str+sim_params.sim_meta.sim_name_full+counter))
+	return commands
 
 def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:str = ''):
 
@@ -653,31 +700,31 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 	// save only the middle layer
 	saveas(CropLayer(m, middle_layer),"%s") 
 
-	''' % ('sliced_mag_after_temp_' +sim_params.sim_meta.sim_name_full + counter))
+	''' % (Constants.sliced_mag_after_temp_str +sim_params.sim_meta.sim_name_full + counter))
 
 	return thermal_run_commands
 
-#--------------- main ---------------#
+# generates list of sim_params based on input and then generate mx3 files
+def process_sim_param (sim_params: SimulationParameters, forc_Hr_mag_name: str = ''):
 
-def main():
-	# --- CHOOSE INPUT OPTION --- #
-	input_dict = load_json_file('../mumax_sim_inputs/input_parameters.json')
+	# introduce an extra layer of folder for FORC simulations
+	if sim_params.tune.forc_run:
 
-	sim_params = SimulationParameters()
-	update_obj_from_dict_recursively(sim_params, input_dict)
-
-	# generate simulation full name
-	sim_params.sim_meta.calc_auto_parameters()
+		sim_params.sim_meta.output_dir = sim_params.sim_meta.output_subdir
+		sim_params.sim_meta.output_subdir = os.path.join(sim_params.sim_meta.output_subdir,
+														 Constants.forc_Hr_str % (sim_params.tune.forc_Hr * 1e3) )
+		sim_params.sim_meta.mumax_file = os.path.join(sim_params.sim_meta.output_subdir,
+													  sim_params.sim_meta.sim_name_full + '.mx3')
 
 	# if mh loop run, convert list of magnetic fields into a list of lists of magnetic fields
 	# outer_product_object_list will not flatten nested list
 	if sim_params.tune.m_h_loop_run:
 		tmp_list_of_lists = []
 		len_field_arr = len(sim_params.tune.external_Bfield)
-		for i in range(int(math.ceil(len_field_arr/sim_params.tune.m_h_loop_points_per_run))):
+		for i in range(int(math.ceil(len_field_arr / sim_params.tune.m_h_loop_points_per_run))):
 			# segment of external_Bfield to put in nested list
-			ind_start = i*sim_params.tune.m_h_loop_points_per_run
-			ind_end = (i+1)*sim_params.tune.m_h_loop_points_per_run
+			ind_start = i * sim_params.tune.m_h_loop_points_per_run
+			ind_end = (i + 1) * sim_params.tune.m_h_loop_points_per_run
 			# check for out of bounds
 			if ind_end > len_field_arr:
 				ind_end = len_field_arr
@@ -691,8 +738,13 @@ def main():
 	sim_params_list_len = len(sim_params_list)
 
 	# this will check that the only array is that of external_Bfield
-	if sim_params.tune.m_h_loop_run and  len(sim_params_list) != len(sim_params.tune.external_Bfield):
+	if sim_params.tune.m_h_loop_run and len(sim_params_list) != len(sim_params.tune.external_Bfield):
 		raise ValueError('There should not be other arrays than external_Bfield for M(H) loop simulations!')
+
+	# if FORC, set the first sim_param in list to load from previous external mag
+	if sim_params.tune.forc_run:
+		sim_params_list[0].sim_meta.config_ovf_path = sim_params.tune.forc_starting_mag_path
+		sim_params_list[0].sim_meta.config_ovf_name = forc_Hr_mag_name
 
 	# create the subdirectory if it does not exist
 	if not os.path.exists(sim_params.sim_meta.output_subdir):
@@ -706,42 +758,97 @@ def main():
 	prev_sim_param = None
 
 	# generate .mx3 and .sh files
-	for loop, sim_param_i in enumerate(sim_params_list):
+	for loop, sim_params_i in enumerate(sim_params_list):
 		# allows continuing from previous stage at a certain loop
-		sim_param_i.sim_meta.loop = loop + sim_params.sim_meta.loop_start
-		sim_param_i.sim_meta.previous_jobid = prev_jobid
+		sim_params_i.sim_meta.loop = loop + sim_params.sim_meta.loop_start
+		sim_params_i.sim_meta.previous_jobid = prev_jobid
 
 		# generate new names and calc geometry
-		sim_param_i.sim_meta.calc_auto_parameters()
-		sim_param_i.geom.calc_auto_parameters()
+		sim_params_i.sim_meta.calc_auto_parameters(autoset_output_subdir=not sim_params.tune.forc_run)
+		sim_params_i.geom.calc_auto_parameters()
+
+		# for FORC, overwrite subdir
+		# if sim_params.tune.forc_run:
+		# 	sim_params_i.sim_meta.output_subdir = sim_params.sim_meta.output_subdir
+		# 	sim_params_i.sim_meta.mumax_file = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.mx3')
 
 		# do effective medium scaling
-		sim_param_i.mat_scaled.calc_effective_medium(sim_param_i.mat, sim_param_i.geom.effective_medium_scaling)
+		sim_params_i.mat_scaled.calc_effective_medium(sim_params_i.mat, sim_params_i.geom.effective_medium_scaling)
 
 		# save each individual simulation's json params
-		save_json_file(sim_param_i)
+		save_json_file(sim_params_i)
 
 		# these are written to the subdirectory
-		writing_mumax_file(sim_param_i)
-		writing_sh(sim_param_i, prev_sim_param, last_sim=loop==sim_params_list_len-1)
+		writing_mumax_file(sim_params_i)
+		writing_sh(sim_params_i, prev_sim_param, last_sim=loop == sim_params_list_len - 1)
 
 		# save the prev_jobid
-		prev_jobid = sim_param_i.sim_meta.previous_jobid
-		prev_sim_param = sim_param_i
+		prev_jobid = sim_params_i.sim_meta.previous_jobid
+		prev_sim_param = sim_params_i
 
 	# submit .sh files to queue
 	if sim_params.sim_meta.production_run:
 		# check if this is a m_h loop run
 		if not sim_params.tune.m_h_loop_run:
 			# submit all jobs at once
-			for loop, sim_param_i in enumerate(sim_params_list):
-				submit_sh(sim_param_i)
+			for loop, sim_params_i in enumerate(sim_params_list):
+				submit_sh(sim_params_i)
 		# m_h loop run, submit just the first job, and the jobs will chain
 		else:
 			submit_sh(sim_params_list[0])
 
+#--------------- main ---------------#
 
-	return
+def main():
+	# --- CHOOSE INPUT OPTION --- #
+	input_dict = load_json_file('../mumax_sim_inputs/input_parameters.json')
+
+	sim_params = SimulationParameters()
+	update_obj_from_dict_recursively(sim_params, input_dict)
+
+	# generate simulation full name
+	sim_params.sim_meta.calc_auto_parameters()
+
+	# FORC logic here
+	if sim_params.tune.forc_run:
+		save_json_file(sim_params)
+		# the only array should be forc_Hr
+		# generate based on forc_Hr first
+		sim_params_list_forc = sim_params.generate_sims()
+		# this will check that the only array is that of forc_Hr
+		if len(sim_params_list_forc) != len(sim_params.tune.forc_Hr):
+			raise ValueError('There should not be arrays other than forc_Hr for FORC simulations!')
+
+		# start main loop for FORC here
+		# loop_start = 0
+		for sim_params_Hr in sim_params_list_forc:
+			sim_params_Hr.tune.external_Bfield = [x/1e3 for x in range(int (sim_params_Hr.tune.forc_Hr*1e3),
+															int(sim_params_Hr.tune.forc_H_stop*1e3),
+															int(sim_params_Hr.tune.forc_H_step*1e3))] + [sim_params_Hr.tune.forc_H_stop]
+			# exclude the first point
+			sim_params_Hr.tune.external_Bfield = sim_params_Hr.tune.external_Bfield[1:]
+			# + [sim_params_Hr.tune.forc_H_stop]
+			# every field in every reversal curve starts on the new loop
+			# sim_params_Hr.sim_meta.loop_start = loop_start
+			# loop_start += len(sim_params_Hr.tune.external_Bfield)
+			# set certain compulsory settings
+			sim_params_Hr.tune.start_series_with_prev_mag = True
+			sim_params_Hr.tune.m_h_loop_run = True
+			# search and set config_ovf_name
+			forc_Hr_mag_name = find_FORC_prev_mag(sim_params_Hr.tune.forc_starting_mag_path,
+													 ending=Constants.Bfield_mT_str %(sim_params_Hr.tune.forc_Hr*1e3)+'.ovf')
+			if forc_Hr_mag_name is None:
+				# prev mag not found
+				raise ValueError('Previous magnetisation not found')
+			# else:
+			# 	sim_params_Hr.sim_meta.config_ovf_name = os.path.join(sim_params_Hr.tune.forc_starting_mag_path,
+			# 														  tmp_prev_config_str)
+
+			process_sim_param(sim_params_Hr, forc_Hr_mag_name)
+
+	else:
+		process_sim_param(sim_params)
+
 
 # run the main function
 if __name__ == '__main__':
