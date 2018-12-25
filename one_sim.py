@@ -301,6 +301,7 @@ class TuningParameters:
 	temperature_annealing_temp: str = ''
 	temperature_annealing_time: float = 1e-9
 	temperature_run_time: float = 5e-10
+	temperature_decay_time: float = 1e-9
 	temperature_run_dt: float = 1e-15
 	temperature_solver: int = 2
 	mag_autosave_period: float = 0 # zero disable autosave
@@ -520,7 +521,8 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	TableAdd(E_demag)
 	TableAdd(E_exch)
 	TableAdd(E_Zeeman)
-	tableAdd(ext_topologicalcharge)
+	TableAdd(ext_topologicalcharge)
+	TableAdd(Temp)
 	OutputFormat = OVF1_TEXT
 	
 	middle_layer := %d
@@ -532,6 +534,10 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	// define some variables here which may or may not be used later
 	temperature_run_time := %E	
 	mz := m.comp(2)
+	// important to declare this as a float
+	t_start := 0.0
+	temperature_decay_time := %E
+	temperature_val := %f
 	
 	''' % (sim_params.mat_scaled.exchange, sim_params.mat_scaled.mag_sat, sim_params.mat_scaled.anistropy_uni, sim_params.mat_scaled.dmi_bulk, sim_params.mat_scaled.dmi_interface,
 
@@ -551,7 +557,11 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 		   sim_params.tune.mag_autosave_period, sim_params.tune.table_autosave_period,
 
-		   sim_params.tune.temperature_run_time))
+		   sim_params.tune.temperature_run_time,
+
+		   sim_params.tune.temperature_decay_time,
+
+		   sim_params.tune.temperature))
 
 	# set initial magnetisation
 	if (sim_params.sim_meta.loop == 0 and not sim_params.tune.start_series_with_prev_mag) or not sim_params.tune.m_h_loop_run:
@@ -680,21 +690,25 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 	ThermSeed(%d) // Set a random seed for thermal noise 
 	
 	FixDt = %E
-	Temp = %f
-
+	// record the start time
+	t_start = t
+	
+	Temp = temperature_val*Exp(-(t-t_start)/temperature_decay_time)
+	
 	Run(temperature_run_time)		
 
 	''' % (sim_params.tune.temperature_solver, rand.randrange(0, 2 ** 32),
-		   sim_params.tune.temperature_run_dt, sim_params.tune.temperature))
+		   sim_params.tune.temperature_run_dt))
 
-	temp_anneal_list = sim_params.tune.temperature_annealing_temp.split(',')
-	if temp_anneal_list[0] != '':
-		for temp in temp_anneal_list:
-			thermal_run_commands += textwrap.dedent('''\
-				Temp = %.0f
-				Run(%E)
-				
-			'''%(float(temp), sim_params.tune.temperature_annealing_time))
+	# temp_anneal_list = sim_params.tune.temperature_annealing_temp.split(',')
+	# if temp_anneal_list[0] != '':
+	# 	for temp in temp_anneal_list:
+	# 		thermal_run_commands += textwrap.dedent('''\
+	# 			Temp = %.0f
+	# 			Run(%E)
+	#
+	# 		'''%(float(temp), sim_params.tune.temperature_annealing_time))
+	#
 
 	thermal_run_commands += textwrap.dedent('''\
 	// save only the middle layer
