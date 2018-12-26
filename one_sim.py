@@ -9,6 +9,8 @@ import math
 from copy import deepcopy
 import random as rand
 
+from simple_job_server import submit_local_job
+
 # This branch creates a list of simulations that calculates the M(H) loop of the sample
 # For the first job, starting from random magnetisation, the system goes to the first magnetic field in the array and relaxes
 # The magnetisation is saved for subsequent jobs. The magnetisation of the middle slide is saved to output.
@@ -259,8 +261,11 @@ class SimulationMetadata:
 	config_ovf_name: str = Constants.config_ovf_str #'config.ovf'
 
 	sh_file: str = ''
+	# True: really doing simulations, False: debugging this script. This is set automatically by checking if not_production_run.txt exist in current dir
 	production_run: bool = False
-	mumax_installed: bool = False
+	# True: Running on local machine, False: Running on cluster e.g. NSCC
+	local_run: bool = False
+	# mumax_installed: bool = False
 	project_code: str = 'Personal'
 
 	def calc_auto_parameters(self, autoset_output_subdir:bool = True):
@@ -282,8 +287,8 @@ class SimulationMetadata:
 		#self.sh_file = os.path.join(self.output_subdir, 'one_sim.sh')
 
 		self.production_run = not os.path.isfile('./not_production_run.txt')  # this will be set automatically by checking if file not_production_run.txt exist in current dir
-		status, outputstr = subprocess.getstatusoutput('mumax3')
-		self.mumax_installed = status == 0
+		# status, outputstr = subprocess.getstatusoutput('mumax3')
+		# self.mumax_installed = status == 0
 
 @dataclass
 class TuningParameters:
@@ -298,8 +303,8 @@ class TuningParameters:
 	m_h_loop_points_per_run: int = 10
 	temperature: float = 900
 	# str is used in order to avoid outer_product of array
-	temperature_annealing_temp: str = ''
-	temperature_annealing_time: float = 1e-9
+	# temperature_annealing_temp: str = ''
+	# temperature_annealing_time: float = 1e-9
 	temperature_run_time: float = 5e-10
 	temperature_decay_time: float = 1e-9
 	temperature_run_dt: float = 1e-15
@@ -349,7 +354,8 @@ def save_json_file(sim_param: SimulationParameters):
 	json.dump(parsed, json_file, sort_keys=True, indent=2)
 
 # Write PBS script for submission to queue
-def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParameters, last_sim: bool = True):
+def writing_sh(sim_params: SimulationParameters, last_sim: bool = True):
+
 	server_script = textwrap.dedent('''\
 	#!/bin/bash
 	#PBS -N %s
@@ -359,21 +365,15 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	#PBS -P %s
 	
 	module load mumax
+	
 	''' % (sim_params.sim_meta.sim_name_full, sim_params.sim_meta.walltime, sim_params.sim_meta.project_code))
-
-	# copy the previous config file out
-	# if prev_sim_param is not None and sim_params.tune.m_h_loop_run:
-	# 	prev_output_config = os.path.join(prev_sim_param.sim_meta.output_subdir, prev_sim_param.sim_meta.sim_name_full + '.out', prev_sim_param.sim_meta.config_ovf_name)
-	# 	server_script = server_script + textwrap.dedent('''\
-	# 	cp -f %s %s
-	# 	''' % (prev_output_config, sim_params.sim_meta.output_subdir))
 
 	# .out subsubdir autocreated by mumax
 	out_subsubdir = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.out')
 
 	# move out the table and ovf (after relax) for easy harvesting
 	server_script += textwrap.dedent('''\
-	mumax3 %s	
+	mumax3 %s
 	mv -f  %s %s 
 	''' % (sim_params.sim_meta.mumax_file,
 		   os.path.join(out_subsubdir, '*.ovf'),
@@ -384,21 +384,13 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	if sim_params.tune.forc_run:
 		table_dest_path_name = os.path.join(sim_params.sim_meta.output_dir,
 											# (sim_params.sim_meta.sim_name + '_st%02d' % sim_params.sim_meta.stage),
-											sim_params.sim_meta.sim_name_full + '_'+Constants.forc_Hr_str % (sim_params.tune.forc_Hr * 1e3)+ '.txt')
+											sim_params.sim_meta.sim_name_full + '_' + Constants.forc_Hr_str % (sim_params.tune.forc_Hr * 1e3)+ '.txt')
 	else:
 		table_dest_path_name = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt')
 
 	server_script += textwrap.dedent('''\
 	cp -f  %s %s
 	'''%(os.path.join(out_subsubdir, 'table.txt'), table_dest_path_name))
-
-	# if applying temperature, move the after temp ovf out too
-	# if sim_params.tune.thermal_fluctuation:
-	# 	server_script = server_script + textwrap.dedent('''\
-	# 		mv -f %s %s
-	# 		''' % (
-	# 	os.path.join(out_subsubdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf'),
-	# 	os.path.join(sim_params.sim_meta.output_subdir, 'after_temp_' + sim_params.sim_meta.sim_name_full + '.ovf')))
 
 	# set up job chainning if this is an m_h loop
 	if sim_params.tune.m_h_loop_run and not last_sim:
@@ -411,32 +403,28 @@ def writing_sh(sim_params: SimulationParameters, prev_sim_param: SimulationParam
 	# defining the location of the .mx3 script
 	sim_params.sim_meta.sh_file = os.path.join(sim_params.sim_meta.output_subdir, 'one_sim_st%02d_%02d.sh' % (sim_params.sim_meta.stage, sim_params.sim_meta.loop))
 
-	# opening and saving it
-	executable_file = open(sim_params.sim_meta.sh_file, "w")
-	executable_file.write(server_script)
-	executable_file.close()
+	# write batch sh script if this is a cluster run
+	if not sim_params.sim_meta.local_run:
+		# opening and saving sh file
+		executable_file = open(sim_params.sim_meta.sh_file, "w")
+		executable_file.write(server_script)
+		executable_file.close()
+
+	else:
+		# submit a local job to local server
+		submit_local_job(sim_params.sim_meta.mumax_file)
 
 # submit the job to PBS
 def submit_sh(sim_params: SimulationParameters):
-	if os.path.isfile(sim_params.sim_meta.sh_file):
-		# if sim_param.sim_meta.loop == 0 or not sim_param.tune.m_h_loop_run:
+	# does not apply for local run
+	if not sim_params.sim_meta.local_run and os.path.isfile(sim_params.sim_meta.sh_file):
 		qsub_params = ['qsub',
 					   '-o', sim_params.sim_meta.output_subdir,
 					   '-e', sim_params.sim_meta.output_subdir,
 					   sim_params.sim_meta.sh_file]
-		jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
-		# the previous_jobid is saved to sim_param, which is then extracted in the main loop
-		# sim_params.sim_meta.previous_jobid = jobid_str.split('.')[0]
 
-		# else:
-		# 	# subsequent steps will only start upon completion of previous
-		# 	qsub_params = ['qsub',
-		# 				   '-o', sim_param.sim_meta.output_subdir,
-		# 				   '-e', sim_param.sim_meta.output_subdir,
-		# 				   '-W','depend=afterok:%s'%sim_param.sim_meta.previous_jobid,
-		# 				   sim_param.sim_meta.sh_file]
-		# 	jobid_str = subprocess.run(qsub_params, stdout=subprocess.PIPE).stdout.decode('utf-8')
-		# 	sim_param.sim_meta.previous_jobid = jobid_str.split('.')[0]
+		# Run command and wait for it to complete
+		subprocess.run(qsub_params) #, stdout=subprocess.PIPE).stdout.decode('utf-8')
 
 # write mumax3 script
 def writing_mumax_file(sim_params: SimulationParameters):
@@ -594,7 +582,7 @@ def writing_mumax_file(sim_params: SimulationParameters):
 
 		mumax_commands += textwrap.dedent('''\
 		// load the previous magnetisation
-		m.LoadFile("%s")
+		m.LoadFile(`%s`)
 		
 		''' % os.path.join(sim_params.sim_meta.config_ovf_path,
 						   sim_params.sim_meta.config_ovf_name))
@@ -604,21 +592,6 @@ def writing_mumax_file(sim_params: SimulationParameters):
 		mumax_commands = mumax_commands + textwrap.dedent('''\
 		B_ext = vector(0, 0, %f) //in Teslas
 		''' % sim_params.tune.external_Bfield)
-
-	# set temperature
-	# if sim_params.tune.thermal_fluctuation:
-	# 	mumax_commands += textwrap.dedent('''\
-	# 	// apply a short burst of thermal fluctuations to allow the system to cross small energy barriers
-	# 	SetSolver(%d) // Solver for run with thermal fluctuations
-	# 	ThermSeed(%d) // Set a random seed for thermal noise
-	# 	FixDt = %E
-	# 	Temp = %f
-	# 	temperature_run_time := %E
-	# 	''' % (sim_params.tune.temperature_solver,
-	# 		   rand.randrange(0,2**32),
-	# 		   sim_params.tune.temperature_run_dt,
-	# 		   sim_params.tune.temperature,
-	# 		   sim_params.tune.temperature_run_time))
 
 	run_and_relax_commands = ''
 
@@ -700,16 +673,6 @@ def run_thermal_fluctuations_commands(sim_params: SimulationParameters, counter:
 	''' % (sim_params.tune.temperature_solver, rand.randrange(0, 2 ** 32),
 		   sim_params.tune.temperature_run_dt))
 
-	# temp_anneal_list = sim_params.tune.temperature_annealing_temp.split(',')
-	# if temp_anneal_list[0] != '':
-	# 	for temp in temp_anneal_list:
-	# 		thermal_run_commands += textwrap.dedent('''\
-	# 			Temp = %.0f
-	# 			Run(%E)
-	#
-	# 		'''%(float(temp), sim_params.tune.temperature_annealing_time))
-	#
-
 	thermal_run_commands += textwrap.dedent('''\
 	// save only the middle layer
 	saveas(CropLayer(m, middle_layer),"%s") 
@@ -769,7 +732,7 @@ def process_sim_param (sim_params: SimulationParameters, forc_Hr_mag_name: str =
 
 	# previous job id
 	prev_jobid = ''
-	prev_sim_param = None
+	# prev_sim_param = None
 
 	# generate .mx3 and .sh files
 	for loop, sim_params_i in enumerate(sim_params_list):
@@ -781,11 +744,6 @@ def process_sim_param (sim_params: SimulationParameters, forc_Hr_mag_name: str =
 		sim_params_i.sim_meta.calc_auto_parameters(autoset_output_subdir=not sim_params.tune.forc_run)
 		sim_params_i.geom.calc_auto_parameters()
 
-		# for FORC, overwrite subdir
-		# if sim_params.tune.forc_run:
-		# 	sim_params_i.sim_meta.output_subdir = sim_params.sim_meta.output_subdir
-		# 	sim_params_i.sim_meta.mumax_file = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.mx3')
-
 		# do effective medium scaling
 		sim_params_i.mat_scaled.calc_effective_medium(sim_params_i.mat, sim_params_i.geom.effective_medium_scaling)
 
@@ -794,11 +752,11 @@ def process_sim_param (sim_params: SimulationParameters, forc_Hr_mag_name: str =
 
 		# these are written to the subdirectory
 		writing_mumax_file(sim_params_i)
-		writing_sh(sim_params_i, prev_sim_param, last_sim=loop == sim_params_list_len - 1)
+		writing_sh(sim_params_i, last_sim=loop == sim_params_list_len - 1)
 
 		# save the prev_jobid
 		prev_jobid = sim_params_i.sim_meta.previous_jobid
-		prev_sim_param = sim_params_i
+		# prev_sim_param = sim_params_i
 
 	# submit .sh files to queue
 	if sim_params.sim_meta.production_run:
@@ -841,10 +799,6 @@ def main():
 															int(sim_params_Hr.tune.forc_H_step*1e3))] + [sim_params_Hr.tune.forc_H_stop]
 			# exclude the first point
 			sim_params_Hr.tune.external_Bfield = sim_params_Hr.tune.external_Bfield[1:]
-			# + [sim_params_Hr.tune.forc_H_stop]
-			# every field in every reversal curve starts on the new loop
-			# sim_params_Hr.sim_meta.loop_start = loop_start
-			# loop_start += len(sim_params_Hr.tune.external_Bfield)
 			# set certain compulsory settings
 			sim_params_Hr.tune.start_series_with_prev_mag = True
 			sim_params_Hr.tune.m_h_loop_run = True
@@ -854,13 +808,12 @@ def main():
 			if forc_Hr_mag_name is None:
 				# prev mag not found
 				raise ValueError('Previous magnetisation not found')
-			# else:
-			# 	sim_params_Hr.sim_meta.config_ovf_name = os.path.join(sim_params_Hr.tune.forc_starting_mag_path,
-			# 														  tmp_prev_config_str)
 
+			# generate .mx3, write batch script and submit job
 			process_sim_param(sim_params_Hr, forc_Hr_mag_name)
 
 	else:
+		# generate .mx3, write batch script and submit job
 		process_sim_param(sim_params)
 
 
