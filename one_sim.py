@@ -520,7 +520,7 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	tableautosave(%E)
 	
 	// define some variables here which may or may not be used later
-	MinimizerStop = 1e-6
+	MinDt = 1e-15 // sometimes relax has problems with adaptive time stepping (e.g. errors like: panic: Time step too small, check if parameters are sensible)
 	temperature_run_time := %E	
 	mz := m.comp(2)
 	// important to declare this as a float
@@ -640,8 +640,8 @@ def relax_commands(sim_params: SimulationParameters, counter:str = ''):
 	SetSolver(3) // back to default solver for relax
 	FixDt = 0 // turn off fixed time step
 	Temp = 0 // turn off temperature
-	// relax()		// high-energy states best minimized by relax
-	minimize()     // sometimes relax has problems with adaptive time stepping (e.g. errors like: panic: Time step too small, check if parameters are sensible)
+	relax()		
+	// minimize()     // can try minimize in the future
 	
 	// save only the middle layer
 	saveas(CropLayer(m, middle_layer),"%s") 
