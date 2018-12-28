@@ -6,6 +6,7 @@
 import zmq
 import queue, threading
 import subprocess
+import time
 
 HOST_PORT = '127.0.0.1:5678'
 TASK_SOCKET = zmq.Context().socket(zmq.REQ)
@@ -83,7 +84,9 @@ class Server(object):
 
 	def _do_work(self, mumax_file_str, gpu_number, **kwargs):
 		"""Return the result of executing the given task."""
-		subprocess.run('mumax3 -gpu %d %s'%(gpu_number, mumax_file_str))
+		# sleep for a short while to ensure than the mx3 file has been written to disk
+		time.sleep(0.5)
+		subprocess.run(['mumax3','-gpu', '%d'%gpu_number, mumax_file_str])
 
 
 def submit_local_job(input_str):
