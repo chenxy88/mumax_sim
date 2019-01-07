@@ -9,7 +9,7 @@ import math
 from copy import deepcopy
 import random as rand
 
-from simple_job_server import submit_local_job
+# from simple_job_server import submit_local_job
 
 # This branch creates a list of simulations that calculates the M(H) loop of the sample
 # For the first job, starting from random magnetisation, the system goes to the first magnetic field in the array and relaxes
@@ -412,7 +412,8 @@ def writing_sh(sim_params: SimulationParameters, last_sim: bool = True):
 
 	else:
 		# submit a local job to local server
-		submit_local_job(sim_params.sim_meta.mumax_file)
+		pass
+		# submit_local_job(sim_params.sim_meta.mumax_file)
 
 # submit the job to PBS
 def submit_sh(sim_params: SimulationParameters):
