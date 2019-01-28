@@ -9,10 +9,12 @@ import subprocess
 import time
 from argparse import ArgumentParser
 
-HOST_PORT = '127.0.0.1:5678'
+HOST_PORT = '127.0.0.1:5679'
 TASK_SOCKET = zmq.Context().socket(zmq.REQ)
 TASK_SOCKET.connect('tcp://' + HOST_PORT)
 KILL_STR = '#kill'
+
+cache_path = 'D:\Xiaoye\Micromagnetics\Kernel_cache'
 
 class Server(object):
 	"""A remote task executor."""
@@ -23,7 +25,7 @@ class Server(object):
 		self.host_port = host_port_in
 		self._context = zmq.Context()
 		self._socket = self._context.socket(zmq.REP)
-		self.GPU_ids = [0] # GPUs to use
+		self.GPU_ids = [0,1] # GPUs to use
 		self.threads = []
 
 		# start workers
@@ -87,7 +89,7 @@ class Server(object):
 		"""Return the result of executing the given task."""
 		# sleep for a short while to ensure than the mx3 file has been written to disk
 		time.sleep(0.5)
-		subprocess.run(['mumax3','-gpu', '%d' % GPU_id, mumax_file_str])
+		subprocess.run(['mumax3','-cache',cache_path,'-gpu', '%d' % GPU_id, mumax_file_str])
 
 
 def submit_local_job(input_str):
@@ -108,14 +110,16 @@ def check_running():
 def main():
 	# grab all the command line arguments
 	# to start server, run this with no arguments
-	parser = ArgumentParser(description='Start or perform other actions on the job server.')
-	parser.add_argument('-a', '--add', dest='sim_file', help='add simulation to server', metavar='FILE')
+	
+	# parser = ArgumentParser(description='Start or perform other actions on the job server.')
+	# parser.add_argument('-a', '--add', dest='sim_file', help='add simulation to server', metavar='FILE')
 
-	args = parser.parse_args()
+	# args = parser.parse_args()
 
-	if not args:
-		w = Server()
-		w.run_server()
+	# if not args:
+	
+	w = Server()
+	w.run_server()
 
 if __name__ == '__main__':
 

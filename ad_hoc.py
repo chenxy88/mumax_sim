@@ -5,31 +5,76 @@ import os
 import re
 
 def FORC_cont_temp():
+
+	local_run = True
+
 	# Hr_list in mT
-	Hr_list = [-5, -10, -15, -20]
-	# H field step in mT
-	H_step = 5
-	MH_loop_start = 250
+	Hr_list = [-2, -6, -10]
+
 	# sweep rate in T/s
-	sweep_rate = 1e6
+	B_sweep_rate = 1e6
+	B_step_size = 0.002
+	B_end = 0
+	mh_sim_name = '11dFORC_st82'
 
 	# ovf path
-	ovf_path = r'C:\Users\Xiaoye\OneDrive\ASTAR-Skyrmions\Projects\Micromagnetics\mumax_sim'
-	mx3_path = r'C:\Users\Xiaoye\OneDrive\ASTAR-Skyrmions\Projects\Micromagnetics\mumax_sim'
-	sim_name = '11dFORC_st70'
+	ovf_path = r'D:\Xiaoye\Micromagnetics\FORC\mumax_sim_outputs\st82\11dFORC_st82.out'
+	mx3_path = r'D:\Xiaoye\Micromagnetics\FORC\mumax_sim_outputs\st83'
 
-	from simple_job_server import submit_local_job
+	sim_name = '11dFORC_st83'
 
-	for Hr in Hr_list:
+	filename_list = os.listdir(ovf_path)
+
+	if local_run:
+		from simple_job_server import submit_local_job
+	else:
+		from one_sim import SimulationParameters, SimulationMetadata, TuningParameters, writing_sh, submit_sh
+		loop_ind = 0
+
+
+	for filename in filename_list:
+
+		# Capture the Hr in mT
+		search = re.search('full_mag_%s_(\+?-?\d+)mT\.ovf'%mh_sim_name, filename)
+
+		if search is None:
+			continue
+
+		Hr = int(search.group(1))
+
+		if not Hr in Hr_list:
+			continue
+
 		# n is the ovf ind
-		n = int(round((MH_loop_start-Hr)/H_step))
+		# n = int(round((MH_loop_start-Hr)/H_step))
 
-		ovf_file = os.path.join(ovf_path,'m{0:06d}.ovf'.format(n))
+		ovf_file = os.path.join(ovf_path, filename)
 		B_start = float(Hr)/1e3
 
-		mx3_filename = sim_name + '_Hr{0:04d}mT.mx3'.format(Hr)
+		mx3_filename = sim_name + '_Hr_{0:04d}mT.mx3'.format(Hr)
 
 		mumax_file_str = os.path.join(mx3_path, mx3_filename)
+
+		if not local_run:
+			sim_params = SimulationParameters(
+
+				sim_meta=SimulationMetadata(
+					sim_name_full=mx3_filename,
+					walltime='24:00:00',
+					project_code='13000385',
+					output_dir=mx3_path,
+					output_subdir=mx3_path,
+					mumax_file=mumax_file_str,
+					stage=71,
+					loop=loop_ind,
+					local_run=False),
+
+				tune=TuningParameters(
+					forc_run=False,
+					m_h_loop_run=False
+				))
+
+			loop_ind+=1
 
 		mumax_commands = textwrap.dedent('''\
 		Mega :=1e6
@@ -119,7 +164,7 @@ def FORC_cont_temp():
 		
 		// constant temperature and damping throughout simulation
 		Temp = 900.0
-		alpha  =0.150000		 // Damping
+		alpha  =0.10000		 // Damping
 		
 		SetSolver(2) // Solver for run with thermal fluctuations	
 		ThermSeed(1589692981) // Set a random seed for thermal noise 
@@ -130,41 +175,76 @@ def FORC_cont_temp():
 		
 		// Sweeping B field
 		B_start := %f
-		B_end := 0
+		B_end := %f
 		// sweep rate in Tesla/s
 		// -1e-12 => 1mT/ns => 5mT/5ns
 		B_sweep_rate := %E
+		// take steps in field, say 2mT
+		B_step_size := %f
+		// field total num of steps
+		B_total_steps := Ceil((B_end-B_start)/B_step_size)+1
 		
-		// initial stablisation run at constant field
-		init_run_time := 0.5e-9
-		B_ext = vector(0,0,B_start)
-		Run(init_run_time)
+		// define some variables here. Note these are all floats
+		B_current := 0.0
+		B_current_mT := 0.0
+		t0 := 0.0
+		
+		// sim time per step in s
+		sim_run_time_per_step := B_step_size / B_sweep_rate
+		const_field_run_time := 1e-9
 		
 		// set autosaves	
-		// in 5mT step. typical: 5ns
-		autosave_m_time := 5e-3/Abs(B_sweep_rate)
-		AutoSave(m, autosave_m_time) 
 		// in 0.1 mT step. typical: 0.01ns
 		tableautosave_time := 1e-5/Abs(B_sweep_rate)
 		tableautosave(tableautosave_time)
 		
-		// B_ext sweep
-		B_ext = vector(0, 0, B_start + B_sweep_rate*(t-init_run_time))
+		// print values to check
+		prt_str := sprintf("==> B_total_steps: %%f",B_total_steps)
+		print(prt_str)
+		prt_str = sprintf("==> sim_run_time_per_step: %%e", sim_run_time_per_step)
+		print(prt_str)
 		
-		// total simulation time. typical: 600ns
-		sim_run_time := (B_end - B_start)/B_sweep_rate
-		// Run
-		Run(sim_run_time)
+		// Big loop
+		for ind := 0; ind < B_total_steps; ind++ {					
+			
+			// initial stablisation run at constant field
+			B_current = B_start + B_step_size*ind
+			B_ext = vector(0,0,B_current)
+			
+			// print values to check
+			prt_str = sprintf("==> B_current: %%f. Running const_field_run_time",B_current)
+			print(prt_str)	
+			
+			Run(const_field_run_time)
+			
+			// output mag	
+			B_current_mT = B_current*1e3
+			saveas(CropLayer(m, middle_layer), sprintf("%%04d_sliced_mag_%s_%%.0fmT", ind, B_current_mT ) ) 
+			//saveas(m, sprintf("%%04d_full_mag_%s_%%.0fmT", ind, B_current_mT) )
+			
+			// sweep to next field
+			t0 = t
+			B_ext = vector(0, 0, B_current + B_sweep_rate*(t-t0))
+			
+			// print values to check
+			prt_str = sprintf("==> B_current: %%f. Sweeping to next field value",B_current)
+			print(prt_str)	
+			
+			Run(sim_run_time_per_step)
+		}			
 	
-			''' %(ovf_file, B_start, sweep_rate))
+		''' %(ovf_file, B_start, B_end, B_sweep_rate, B_step_size, sim_name, sim_name))
 
 		mumax_file = open(mumax_file_str, "w")
 		mumax_file.write(mumax_commands)
 		mumax_file.close()
 
 		# submit job to local server
-		submit_local_job(mumax_file_str)
-
+		if local_run:
+			submit_local_job(mumax_file_str)
+		else:
+			writing_sh(sim_params)
+			#submit_sh(sim_params)
 
 def relax_many():
 
@@ -179,7 +259,6 @@ def relax_many():
 
 	# find all ovf files in ovf_path
 	ovf_list = [file for file in os.listdir(ovf_path) if file.endswith('.ovf')]
-
 
 	for ovf_file in ovf_list:
 		# abs path and filename
@@ -331,6 +410,6 @@ def relax_many():
 
 if __name__ == '__main__':
 	# FORC for continuous temp
-	# FORC_cont_temp()
+	FORC_cont_temp()
 	# relax individual temp results
-	relax_many()
+	# relax_many()

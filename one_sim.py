@@ -306,7 +306,6 @@ class TuningParameters:
 	# temperature_annealing_temp: str = ''
 	# temperature_annealing_time: float = 1e-9
 	temperature_run_time: float = 5e-10
-	temperature_decay_time: float = 1e-9
 	temperature_run_dt: float = 1e-15
 	temperature_solver: int = 2
 	mag_autosave_period: float = 0 # zero disable autosave
@@ -374,7 +373,7 @@ def writing_sh(sim_params: SimulationParameters, last_sim: bool = True):
 	# move out the table and ovf (after relax) for easy harvesting
 	server_script += textwrap.dedent('''\
 	mumax3 %s
-	mv -f  %s %s 
+	# mv -f  %s %s 
 	''' % (sim_params.sim_meta.mumax_file,
 		   os.path.join(out_subsubdir, '*.ovf'),
 		   sim_params.sim_meta.output_subdir))
@@ -389,7 +388,7 @@ def writing_sh(sim_params: SimulationParameters, last_sim: bool = True):
 		table_dest_path_name = os.path.join(sim_params.sim_meta.output_subdir, sim_params.sim_meta.sim_name_full + '.txt')
 
 	server_script += textwrap.dedent('''\
-	cp -f  %s %s
+	# cp -f  %s %s
 	'''%(os.path.join(out_subsubdir, 'table.txt'), table_dest_path_name))
 
 	# set up job chainning if this is an m_h loop
@@ -526,7 +525,6 @@ def writing_mumax_file(sim_params: SimulationParameters):
 	mz := m.comp(2)
 	// important to declare this as a float
 	t_start := 0.0
-	temperature_decay_time := %E
 	temperature_val := %f
 	
 	''' % (sim_params.mat_scaled.exchange, sim_params.mat_scaled.mag_sat, sim_params.mat_scaled.anistropy_uni, sim_params.mat_scaled.dmi_bulk, sim_params.mat_scaled.dmi_interface,
@@ -548,8 +546,6 @@ def writing_mumax_file(sim_params: SimulationParameters):
 		   sim_params.tune.mag_autosave_period, sim_params.tune.table_autosave_period,
 
 		   sim_params.tune.temperature_run_time,
-
-		   sim_params.tune.temperature_decay_time,
 
 		   sim_params.tune.temperature))
 
