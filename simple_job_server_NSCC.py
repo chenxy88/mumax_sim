@@ -4,6 +4,7 @@
 """Broker-less distributed task queue."""
 
 import zmq
+import socket
 import os
 import paramiko
 import queue, threading
@@ -38,6 +39,7 @@ class Server(object):
 		self.ssh_client = paramiko.SSHClient()
 		self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 		self.rsakey= paramiko.RSAKey.from_private_key_file('id_rsa')
+		self.remoteLog = remote_datapath + socket.gethostname() + '_log.txt'
 
 		# start workers
 		for i in self.GPU_ids:
@@ -49,7 +51,7 @@ class Server(object):
 	def run_server(self):
 		"""Start listening for tasks."""
 		self._socket.bind('tcp://' + self.host_port)
-		print('Simple Job Server (SJS) online. Waiting for jobs...\n')
+		self.PrintRemote('Simple Job Server (SJS) online. Waiting for jobs...\n')
 
 		while True:
 			#input_string = self._socket.recv_pyobj()
@@ -80,7 +82,7 @@ class Server(object):
 			time.sleep(120)
 
 		# stopping
-		print('SJS stopping...\n')
+		self.PrintRemote('SJS stopping...\n')
 		# block until all tasks are done
 		for t in self.threads:
 			t.join()
@@ -93,7 +95,7 @@ class Server(object):
 		while True:
 			# get from job queue
 			input_string = self.q.get()
-			print('GPU %d received job %s.\n' % (GPU_id, input_string))
+			self.PrintRemote('GPU %d received job %s.\n' % (GPU_id, input_string))
 			#  convert to tuple
 			kwargs = {}
 
@@ -102,7 +104,7 @@ class Server(object):
 
 			else:
 				self._do_work(input_string, GPU_id, **kwargs)
-				print('GPU %d completed job %s.\n' % (GPU_id, input_string))
+				self.PrintRemote('GPU %d completed job %s.\n' % (GPU_id, input_string))
 
 		print('GPU %d stopped.\n' % GPU_id)
 
@@ -110,15 +112,22 @@ class Server(object):
 		"""Return the result of executing the given task."""
 		# sleep for a short while to ensure than the mx3 file has been written to disk
 		time.sleep(0.5)
-		subprocess.run(['mumax3','-cache',cache_path,'-gpu', '%d' % GPU_id, mumax_file_str])
-		self.UploadData(mumax_file_str,False)
-	
-		self.ssh_client.connect(ssh_hostname, username='kongjf', pkey = self.rsakey)
-		ftp_client = self.ssh_client.open_sftp()
-		ftp_client.remove(mx3running_path+mumax_file_str)
-		ftp_client.close()
+		retproc = subprocess.run(['mumax3','-cache',cache_path,'-gpu', '%d' % GPU_id, mumax_file_str])
+		if retproc.returncode != 0:
+			self.PrintRemote('Error in the mumax script %s.\n' % mumax_file_str)
+			return
+
+		self.UploadData(mumax_file_str,False)	
+		try:
+			self.ssh_client.connect(ssh_hostname, username='kongjf', pkey = self.rsakey)
+			ftp_client = self.ssh_client.open_sftp()
+			ftp_client.remove(mx3running_path+mumax_file_str)
+			ftp_client.close()
+			self.ssh_client.close()
+		except:
+			self.PrintRemote('_do_work: Unable to connect to remove mx3 file in mx3running.\n')
 		
-		print('%s done.\n' % mumax_file_str)
+		self.PrintRemote('%s done.\n' % mumax_file_str)
 		
 	# if any gpu usage is below 10%, counted as idle	
 	def GPU_Idle(self):
@@ -136,7 +145,9 @@ class Server(object):
 			ftp_client = self.ssh_client.open_sftp()
 			ftp_client.chdir(mx3_filepath)
 		except:
-			print('Error in opening connection. Will return empty string as filename.\n')
+			self.PrintRemote('Error in opening connection. Will return empty string as filename.\n')
+			ftp_client.close()
+			self.ssh_client.close()
 			return ''
 		
 		for i in stdout.readlines():
@@ -150,34 +161,62 @@ class Server(object):
 				# ftp_client.remove(mx3_filepath+filename)
 				# fileObj.close()
 				# ftp_client.remove(mx3_filepath+filename+'.lock')
-				print('Moved %s to local drive for running.\n'%filename)
+				self.PrintRemote('Moved %s to local drive for running.\n'%filename)
 				ftp_client.close()
+				self.ssh_client.close()
 				return filename
 			except:
-				print('Error in GetAFile\n')
+				print('Error in trying to get a file.\n')
 		ftp_client.close()
+		self.ssh_client.close()
 		return ''
 	
 	def UploadData(self,filename,delete=False):
-		self.ssh_client.connect(ssh_hostname, username='kongjf', pkey = self.rsakey)
-		ftp_client = self.ssh_client.open_sftp()
-		remotedir = remote_datapath+filename[0:-3]+'out'
-		ftp_client.mkdir(remotedir)
-		self.ssh_client.exec_command('chmod g+r ' + remotedir) 
+		try:
+			newssh_client = self.GetNewSSHClient()
+			ftp_client = newssh_client.open_sftp()
+			remotedir = remote_datapath+filename[0:-3]+'out'
+			ftp_client.mkdir(remotedir)
+			newssh_client.exec_command('chmod g+r ' + remotedir)
+		except:
+			self.PrintRemote('UploadData: Error in opening ssh connection. Files not uploaded.\n')
+			return
 		
 		localdir = local_mx3path+filename[0:-3]+'out\\'
 		listoffiles = os.listdir(localdir)
 		for file in listoffiles:
 			ftp_client.put(localdir+file,remotedir+'/'+file)
-			self.ssh_client.exec_command('chmod g+r ' + remotedir+'/'+file) 
+			newssh_client.exec_command('chmod g+r ' + remotedir+'/'+file) 
 			if delete:
 				os.remove(localdir+file)
 			
 		if delete:
 			os.rmdir(localdir)
 			os.remove(local_mx3path+filename)
-			
+		
+		newssh_client.exec_command('chgrp -Rh 13000385' + remotedir) 
 		ftp_client.close()
+		newssh_client.close()
+		
+	def PrintRemote(self,msg):
+		print(msg)
+		try:
+			ssh_client = self.GetNewSSHClient()
+			ftp_client = ssh_client.open_sftp()
+			file = ftp_client.file(self.remoteLog,'a+')
+			file.write(msg)
+			file.close()
+			ftp_client.close()
+			ssh_client.close()
+		except:
+			print('Error writing to remote log file.\n')
+			
+	def GetNewSSHClient(self):
+		ssh_client = paramiko.SSHClient()
+		ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+		rsakey= paramiko.RSAKey.from_private_key_file('id_rsa')
+		ssh_client.connect(ssh_hostname, username='kongjf', pkey = rsakey)
+		return ssh_client
 
 		
 
