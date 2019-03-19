@@ -1,27 +1,31 @@
-# this script reads in a template text file and generates many mx3 text files and submits them to local or cluster server
+"""
+This script reads in a template text file and generates multiple mx3 text files.
+"""
 
 import textwrap
 import os
 import re
+import random as rand
 
 def FORC_cont_temp():
 
 	local_run = True
 
 	# Hr_list in mT
-	Hr_list = [-2, -6, -10]
+	Hr_list = list(range(-200, 0, 2))
 
 	# sweep rate in T/s
 	B_sweep_rate = 1e6
 	B_step_size = 0.002
-	B_end = 0
-	mh_sim_name = '11dFORC_st82'
+	# important to sweep pass zero, so that gradient at zero could be found accurately
+	B_end = 0.02
 
 	# ovf path
-	ovf_path = r'D:\Xiaoye\Micromagnetics\FORC\mumax_sim_outputs\st82\11dFORC_st82.out'
-	mx3_path = r'D:\Xiaoye\Micromagnetics\FORC\mumax_sim_outputs\st83'
+	ovf_path = r'D:\Skyrmions-data\FORC\Baby forc\st128'
+	mx3_output_path = r'D:\Skyrmions-data\FORC\Baby forc\st129\mx3 files'
+	ovf_file_prefix = 'xy_forc_st128_e309808aa0c543aba158bce2d7b33371_'
 
-	sim_name = '11dFORC_st83'
+	sim_name = '33dFORC_st129'
 
 	filename_list = os.listdir(ovf_path)
 
@@ -35,7 +39,7 @@ def FORC_cont_temp():
 	for filename in filename_list:
 
 		# Capture the Hr in mT
-		search = re.search('full_mag_%s_(\+?-?\d+)mT\.ovf'%mh_sim_name, filename)
+		search = re.search('full_mag_.+_(\+?-?\d+)mT\.ovf', filename)
 
 		if search is None:
 			continue
@@ -48,12 +52,13 @@ def FORC_cont_temp():
 		# n is the ovf ind
 		# n = int(round((MH_loop_start-Hr)/H_step))
 
-		ovf_file = os.path.join(ovf_path, filename)
+		# ovf_file = os.path.join(ovf_path, filename)
+		ovf_file = ovf_file_prefix+filename
 		B_start = float(Hr)/1e3
 
 		mx3_filename = sim_name + '_Hr_{0:04d}mT.mx3'.format(Hr)
 
-		mumax_file_str = os.path.join(mx3_path, mx3_filename)
+		mumax_file_str = os.path.join(mx3_output_path, mx3_filename)
 
 		if not local_run:
 			sim_params = SimulationParameters(
@@ -62,8 +67,8 @@ def FORC_cont_temp():
 					sim_name_full=mx3_filename,
 					walltime='24:00:00',
 					project_code='13000385',
-					output_dir=mx3_path,
-					output_subdir=mx3_path,
+					output_dir=mx3_output_path,
+					output_subdir=mx3_output_path,
 					mumax_file=mumax_file_str,
 					stage=71,
 					loop=loop_ind,
@@ -83,12 +88,12 @@ def FORC_cont_temp():
 		Mili :=1e-3
 		
 		// Micromagnetic variables
-		Aex_var := 3.999960*Pico  // Exchange in J/m^3
-		Msat_var := 0.367330*Mega  //Saturation magnetisation in A/m
-		Ku1_var	:= 0.101102*Mega  // Anistropy in J/m^3
+		Aex_var := 4.533333333*Pico  // Exchange in J/m^3
+		Msat_var := 0.316519345*Mega  //Saturation magnetisation in A/m
+		Ku1_var	:= 0.075923784*Mega  // Anistropy in J/m^3
 		Dbulk_var  := 0.000000*Mili  //Bulk DMI in J/m^2
-		Dind_var  := 0.733326*Mili  //Interfacial DMI in J/m^2
-		
+		Dind_var  := 0.62*Mili  //Interfacial DMI in J/m^2
+				
 		// Setting micromagnetic parameters for Region 0: Non-magnetic
 		Aex.SetRegion(0, 10*Pico)
 		Msat.SetRegion(0, 0)
@@ -116,12 +121,12 @@ def FORC_cont_temp():
 		// Physical size
 		size_X	:=1536.000000 //sim_param.phy_size.x
 		size_Y	:=1536.000000
-		size_Z	:=60.000000
+		size_Z	:=42.000000
 		
 		// Total number of simulations cells
 		Nx	:=384 //sim_param.grid_size.x
 		Ny	:=384
-		Nz	:=20
+		Nz	:=14
 		
 		// PBC, if any
 		PBC_x :=0 //sim_param.pbc.x
@@ -129,7 +134,7 @@ def FORC_cont_temp():
 		PBC_z :=0
 		
 		z_single_rep_thickness := 1 // thickness of single repetition in number of cells in z
-		z_layer_rep_num := 20 //this many repetitions
+		z_layer_rep_num := 14 //this many repetitions
 		num_of_regions := 2 // number of FM regions (exclude NM region 0)
 		
 		//SetPBC(PBC_x, PBC_y, PBC_z)
@@ -155,20 +160,21 @@ def FORC_cont_temp():
 		TableAdd(E_Zeeman)
 		TableAdd(ext_topologicalcharge)
 		TableAdd(Temp)
+		TableAdd(LastErr)
 		OutputFormat = OVF1_TEXT
 		
-		middle_layer := 9
+		middle_layer := 6
 		
 		// define some variables here which may or may not be used later
 		mz := m.comp(2)
 		
 		// constant temperature and damping throughout simulation
-		Temp = 900.0
+		Temp = 850.0
 		alpha  =0.10000		 // Damping
 		
 		SetSolver(2) // Solver for run with thermal fluctuations	
-		ThermSeed(1589692981) // Set a random seed for thermal noise 
-		FixDt = 2.000000E-13
+		ThermSeed(%d) // Set a random seed for thermal noise 
+		FixDt = 1.500000E-13
 		
 		// initialise with +z uniform mag since M(H) loop with start at saturation
 		m.LoadFile(`%s`)
@@ -177,7 +183,7 @@ def FORC_cont_temp():
 		B_start := %f
 		B_end := %f
 		// sweep rate in Tesla/s
-		// -1e-12 => 1mT/ns => 5mT/5ns
+		// -1e6 => 1mT/ns => 5mT/5ns
 		B_sweep_rate := %E
 		// take steps in field, say 2mT
 		B_step_size := %f
@@ -205,7 +211,7 @@ def FORC_cont_temp():
 		print(prt_str)
 		
 		// Big loop
-		for ind := 0; ind < B_total_steps; ind++ {					
+		for ind := 0; ind < B_total_steps; ind++ {
 			
 			// initial stablisation run at constant field
 			B_current = B_start + B_step_size*ind
@@ -231,19 +237,22 @@ def FORC_cont_temp():
 			print(prt_str)	
 			
 			Run(sim_run_time_per_step)
-		}			
+		}
+		
+		// save final ovf file
+		saveas(m, sprintf("final_full_mag_%s_%%.0fmT", B_current_mT))
 	
-		''' %(ovf_file, B_start, B_end, B_sweep_rate, B_step_size, sim_name, sim_name))
+		''' %(rand.randrange(0, 2 ** 32), ovf_file, B_start, B_end, B_sweep_rate, B_step_size, sim_name, sim_name, sim_name))
 
 		mumax_file = open(mumax_file_str, "w")
 		mumax_file.write(mumax_commands)
 		mumax_file.close()
 
 		# submit job to local server
-		if local_run:
-			submit_local_job(mumax_file_str)
-		else:
-			writing_sh(sim_params)
+		# if local_run:
+		# 	submit_local_job(mumax_file_str)
+		# else:
+		# 	writing_sh(sim_params)
 			#submit_sh(sim_params)
 
 def relax_many():
