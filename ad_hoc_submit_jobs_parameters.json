@@ -1,0 +1,21 @@
+{
+	"job_set_name": "st129",
+	"cache_path" : "D:\\Skyrmions-data\\FORC\\Baby forc\\st129\\tmp_cache",
+	"ssh_hostname": "astar.nscc.sg",
+	"remote_mx3_path": "/scratch/users/astar/imre/chenxy14/Micromagnetics/FORC/mumax_sim_outputs",
+	"local_path": "D:\\Skyrmions-data\\FORC\\Baby forc\\st129\\ad_hoc_submit_jobs",
+	"rsa_key_path": "C:\\Users\\Xiaoye\\OneDrive\\ASTAR-Skyrmions\\Techniques, Instrumentation\\Micromagnetics\\NSCC\\nscc_imre.txt",
+	"remote_username": "chenxy1e",
+	"walltime": "24:00:00",
+	"project": "13000385",
+	"sh_replacement_keys":{
+		"name": "name_9e0272da291d4e4eb295ad03f35f132e",
+		"walltime": "walltime_0bcf006c78d449989c7444ea9d5ea3f2",
+		"project": "project_564e4c15d2ca463696fff4f3b7020dd2",
+		"mx3_file": "mx3_file_6cd0eb031acf4b36982d877fe8c142ce"
+	},
+	"replacement_dict": {
+		"instructions_a018c62e214d45eca1bbca5b6a2d2301": "The keys will be interpreted as a regular expression, and will be used to replace any matches in the mx3 file. To avoid accidental key collisions, please include in your key a randomly generated GUID e.g.(https://www.guidgenerator.com/online-guid-generator.aspx).",
+		"xy_forc_st128_e309808aa0c543aba158bce2d7b33371_": "/scratch/users/astar/imre/chenxy14/Micromagnetics/FORC/mumax_sim_outputs/st128/11dFORC_st128.out/"
+	}
+}

@@ -9,7 +9,7 @@ and https://medium.com/@shashwat_ds/a-tiny-multi-threaded-job-queue-in-30-lines-
 
 import zmq
 import socket
-import os, re
+import os, re, sys
 import paramiko
 import queue, threading
 import subprocess
@@ -21,7 +21,6 @@ from argparse import ArgumentParser
 HOST_PORT = '127.0.0.1:5679'
 TASK_SOCKET = zmq.Context().socket(zmq.REQ)
 TASK_SOCKET.connect('tcp://' + HOST_PORT)
-KILL_STR = 'KILL.mx3'
 INPUT_PARAMS_FILENAME = 'input_parameters.json'
 
 
@@ -72,13 +71,13 @@ def update_obj_from_dict_recursively(some_obj, some_dict):
 
 @dataclass
 class Parameters:
-	cache_path: str = 'D:\Xiaoye\Micromagnetics\Kernel_cache'
+	cache_path: str = ''
 	smi_path: str = 'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi'
-	local_mx3path: str = 'D:\\JF\\mx3\\'
+	local_mx3path: str = ''
 	ssh_hostname: str = 'astar.nscc.sg'
-	mx3_filepath: str = '/home/projects/13000385/mumax3/mx3/'
-	mx3running_path: str = '/home/projects/13000385/mumax3/mx3running/'
-	remote_datapath: str = '/home/projects/13000385/mumax3/mx3output/'
+	mx3_filepath: str = ''
+	mx3running_path: str = ''
+	remote_datapath: str = ''
 	remote_username: str = ''
 	rsa_key_path: str = ''
 	number_of_GPUs: int = 2
@@ -115,6 +114,7 @@ class Server(object):
 		# start workers
 		for i in self.GPU_ids:
 			t = threading.Thread(target=self.worker, args=(i,))
+			# daemon threads are killed automatically when main thread exits
 			t.daemon = True
 			t.start()
 			self.threads.append(t)
@@ -126,18 +126,18 @@ class Server(object):
 		self._socket.bind('tcp://' + self.host_port)
 		self.PrintRemote('Simple Job Server (SJS) online. Waiting for jobs...\n')
 
-		filename = ''
+		# filename = ''
 
 		while True:
 			#input_string = self._socket.recv_pyobj()
 			#print('SJS received command %s.\n'%input_string)
 			
 			while self.No_work_and_GPU_Idle():
-				print('GPU idle, attempting to check for files.\n')
+				print(self.AppendDateTime('GPU idle, attempting to check for files.\n'))
 				# filename does NOT include local path
 				filename = self.GetAFile()
 			
-				if filename == '' or filename == KILL_STR:
+				if filename == '': # or filename == KILL_STR:
 					break
 
 				elif filename.endswith('.mx3'):
@@ -145,38 +145,28 @@ class Server(object):
 					self.PrintRemote('File downloaded %s.\n'%filename)
 
 					# filter file here
-					self.FilterFile(filename)
+					local_path_and_filename = os.path.join(self.params.local_mx3path, filename)
+					self.FilterFile(self.params.replacement_dict, local_path_and_filename, local_path_and_filename)
 
 					# put in local running queue
 					self.q.put(filename)
 
 				time.sleep(5)   # wait for some time to prevent instant checking
-			
-			if filename == KILL_STR:
-				# empty queue
-				while not self.q.empty():
-					try:
-						self.q.get(False)
-					except queue.Empty:
-						continue
-					self.q.task_done()
-
-				# kill workers
-				for i in self.GPU_ids:
-					self.q.put(filename)
-				#self._socket.send_pyobj('')
-				break
 		
 			# check the server every 2 mins
-			time.sleep(120)
+			for i in range(120,0, -1):
+				sys.stdout.write('\rSleep for %ds before checking for files again. Press Ctrl+C to terminate...' % i)
+				sys.stdout.flush()
+				time.sleep(1)
+			print('\n\n')
 
 		# stopping
-		self.PrintRemote('SJS stopping...\n')
+		# self.PrintRemote('SJS stopping...\n')
 		# block until all tasks are done
-		for t in self.threads:
-			t.join()
-
-		self.PrintRemote('SJS stopped.\n')
+		# for t in self.threads:
+		# 	t.join()
+		#
+		# self.PrintRemote('SJS stopped.\n')
 
 	def worker(self, GPU_id):
 		self.PrintRemote('GPU %d started.\n' % GPU_id)
@@ -188,17 +178,18 @@ class Server(object):
 			#  convert to tuple
 			kwargs = {}
 
-			if filename == KILL_STR:
-				break
+			# if filename == KILL_STR:
+			# 	break
 
-			else:
-				self._do_work(filename, GPU_id, **kwargs)
-				self.PrintRemote('GPU %d completed job %s.\n' % (GPU_id, filename))
+			# else:
+
+			self._do_work(filename, GPU_id, **kwargs)
+			self.PrintRemote('GPU %d completed job %s.\n' % (GPU_id, filename))
 
 			# job completed
 			self.q.task_done()
 
-		self.PrintRemote('GPU %d stopped.\n' % GPU_id)
+		# self.PrintRemote('GPU %d stopped.\n' % GPU_id)
 
 	def _do_work(self, filename, GPU_id, **kwargs):
 
@@ -214,7 +205,7 @@ class Server(object):
 		retproc = subprocess.run(['mumax3','-cache', self.params.cache_path,'-gpu', '%d' % GPU_id, local_path_and_filename])
 		# check if the simulation ran with no error
 		if retproc.returncode != 0:
-			self.PrintRemote('***** Error in the mumax script %s. *****\n' % filename)
+			self.PrintRemote('***** Error in the mumax script %s, running on GPU %d. *****\n' % (filename, GPU_id))
 			return
 
 		# upload the results
@@ -287,30 +278,30 @@ class Server(object):
 		self.ssh_client.close()
 		return ''
 
-	def FilterFile(self, filename):
+	# change to static method so that this can be used by others
+	@staticmethod
+	def FilterFile(replacement_dict: dict, old_path_and_filename, new_path_and_file_name):
 
 		""" Open file and replace all keywords as indicated by replacement_dict. Note that the keys are treated as
 		regular expressions."""
 
-		if self.params.replacement_dict is not None:
+		if replacement_dict is not None:
 
 			# set local path and filename
-			local_path_and_filename = os.path.join(self.params.local_mx3path, filename)
+			# local_path_and_filename = os.path.join(params.local_mx3path, filename)
 
-			with open(local_path_and_filename, 'r') as file:
+			with open(old_path_and_filename, 'r') as file:
 				file_content = file.read()
 
 			# do filtering here
 			# NOTE: key is treated as a regular expression
-			for key, val in self.params.replacement_dict.items():
+			for key, val in replacement_dict.items():
 				# give a lambda function that returns val, to avoid the extra processing of backslash escapes
 				file_content = re.sub(key, lambda x: val, file_content)
 
-			# delete file
-			os.remove(local_path_and_filename)
-
 			# write new contents to file
-			with open(local_path_and_filename, 'w') as file:
+			# this discard all contents if the file already exist
+			with open(new_path_and_file_name, 'w') as file:
 				file.write(file_content)
 	
 	def UploadData(self,filename,delete=False):
@@ -350,8 +341,10 @@ class Server(object):
 		self.PrintRemote('Uploaded results of %s to remote location.\n' % filename)
 		
 	def PrintRemote(self,msg):
+
 		# append date-time to msg
-		msg = '[' + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+']:\t' + msg
+		msg = self.AppendDateTime(msg)
+
 		print(msg)
 		try:
 			ssh_client = self.GetNewSSHClient()
@@ -371,6 +364,10 @@ class Server(object):
 		ssh_client.connect(self.params.ssh_hostname, username=self.params.remote_username, pkey = rsakey)
 		return ssh_client
 
+	@staticmethod
+	def AppendDateTime(msg):
+		return '[' + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+']:\t' + msg
+
 
 def submit_local_job(input_str):
 	"""Return the result of running the task *runnable* with the given
@@ -379,13 +376,6 @@ def submit_local_job(input_str):
 	results = TASK_SOCKET.recv_pyobj()
 	return results
 
-def kill():
-	# kill the server by sending the KILL_STR
-	submit_local_job(KILL_STR)
-
-def check_running():
-	# check if the server is running
-	pass
 
 def main():
 	# grab all the command line arguments

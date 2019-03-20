@@ -1,5 +1,8 @@
 """
 This script reads in a template text file and generates multiple mx3 text files.
+TODO:
+1. Read in a template mx3 file. Comments in the mx3 file will specify which placeholder text has to be substituted by which array.
+2. Use outer_product_object_list or similar to generate the required simulation files.
 """
 
 import textwrap
