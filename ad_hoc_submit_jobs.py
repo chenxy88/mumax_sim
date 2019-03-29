@@ -2,7 +2,7 @@
 This script reads in a parameters file, a template sh file and a folder of mx3 files, then submit the mx3 files to NSCC server.
 """
 
-import os, paramiko
+import os, paramiko, time
 import json, uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -93,6 +93,7 @@ def submit_jobs_to_NSCC():
 
 	except Exception as Argument:
 		print('Connection to remote location failed with exception: %s'%Argument)
+
 		return
 
 	# constructs replacement dict for sh file
@@ -127,13 +128,21 @@ def submit_jobs_to_NSCC():
 
 		# tries to submits the sh file using qsub
 		try:
-			ssh_client.exec_command('qsub ' + remote_sh_path_and_filename)
-			print('Submitted job: %s'%filename)
+			# chan = ssh_client.get_transport().open_session()
+			stdin, stdout, stderr = ssh_client.exec_command('qsub ' + remote_sh_path_and_filename)
+			print('Submitted job: %s ' % filename)
+			msg = stdout.channel.recv(4096).decode('ascii')
+			exit_status = stdout.channel.recv_exit_status()
+			print('Submitted job: %s with message: %s and exit status: %d'%(filename, msg, exit_status))
+
+			if exit_status != 0:
+				raise Exception("Error submitting job.")
 
 		except Exception as Argument:
 			print('Failed to submit job with exception: %s' % Argument)
-			return
+
 	pass
+	return
 
 
 if __name__ == '__main__':

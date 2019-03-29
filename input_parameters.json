@@ -8,7 +8,7 @@
 	"remote_datapath": "/scratch/users/astar/imre/hopin2/Micromagnetics/mx3output/",
 	"rsa_key_path": "D:\\Common\\rsa_key\\nscc_imre_hopin.txt",
 	"remote_username": "hopin2",
-	"number_of_GPUs": 2,
+	"GPU_ids": [0,1],
 	"replacement_dict": {
 		"instructions_a018c62e214d45eca1bbca5b6a2d2301": "The keys will be interpreted as a regular expression, and will be used to replace any matches in the mx3 file. To avoid accidental key collisions, please include in your key a randomly generated GUID e.g.(https://www.guidgenerator.com/online-guid-generator.aspx).",
 		"xy_forc_st128_e309808aa0c543aba158bce2d7b33371_": "D:\\Xiaoye\\Micromagnetics\\FORC\\mumax_sim_outputs\\st128\\11dFORC_st128.out\\"

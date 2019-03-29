@@ -80,7 +80,7 @@ class Parameters:
 	remote_datapath: str = ''
 	remote_username: str = ''
 	rsa_key_path: str = ''
-	number_of_GPUs: int = 2
+	GPU_ids: [int] = None
 
 	# used to scan an input mx3 file for keywords to replace
 	replacement_dict: dict = field(default_factory=dict)
@@ -104,7 +104,7 @@ class Server(object):
 		self.host_port = host_port_in
 		self._context = zmq.Context()
 		self._socket = self._context.socket(zmq.REP)
-		self.GPU_ids = list(range(0, self.params.number_of_GPUs)) # GPUs to use
+		self.GPU_ids = self.params.GPU_ids # GPUs to use
 		self.threads = []
 		self.ssh_client = paramiko.SSHClient()
 		self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -151,22 +151,11 @@ class Server(object):
 					# put in local running queue
 					self.q.put(filename)
 
-				time.sleep(5)   # wait for some time to prevent instant checking
+				# wait for 2 mins to allow the job to start utilisation of GPU
+				time.sleep(120)
 		
 			# check the server every 2 mins
-			for i in range(120,0, -1):
-				sys.stdout.write('\rSleep for %ds before checking for files again. Press Ctrl+C to terminate...' % i)
-				sys.stdout.flush()
-				time.sleep(1)
-			print('\n\n')
-
-		# stopping
-		# self.PrintRemote('SJS stopping...\n')
-		# block until all tasks are done
-		# for t in self.threads:
-		# 	t.join()
-		#
-		# self.PrintRemote('SJS stopped.\n')
+			time.sleep(120)
 
 	def worker(self, GPU_id):
 		self.PrintRemote('GPU %d started.\n' % GPU_id)
@@ -177,11 +166,6 @@ class Server(object):
 			self.PrintRemote('GPU %d received job %s.\n' % (GPU_id, filename))
 			#  convert to tuple
 			kwargs = {}
-
-			# if filename == KILL_STR:
-			# 	break
-
-			# else:
 
 			self._do_work(filename, GPU_id, **kwargs)
 			self.PrintRemote('GPU %d completed job %s.\n' % (GPU_id, filename))
@@ -202,10 +186,10 @@ class Server(object):
 		time.sleep(0.5)
 		local_path_and_filename = os.path.join(self.params.local_mx3path, filename)
 		# runs the simulation
-		retproc = subprocess.run(['mumax3','-cache', self.params.cache_path,'-gpu', '%d' % GPU_id, local_path_and_filename])
+		retproc = subprocess.run(['mumax3','-cache', self.params.cache_path,'-gpu', '%d' % GPU_id, local_path_and_filename], capture_output=True)
 		# check if the simulation ran with no error
 		if retproc.returncode != 0:
-			self.PrintRemote('***** Error in the mumax script %s, running on GPU %d. *****\n' % (filename, GPU_id))
+			self.PrintRemote('***** Error in the mumax script %s, running on GPU %d. *****\nOutput: %s\nError msg: %s\n\n' % (filename, GPU_id, retproc.stdout, retproc.stderr))
 			return
 
 		# upload the results
@@ -258,6 +242,7 @@ class Server(object):
 
 			try:
 				# fileObj = ftp_client.file(filename+'.lock',mode='x')   # create lock file for concurrency
+				# TODO: Need to resolve concurrency issue. Check to see if move operation was successful
 				self.ssh_client.exec_command('mv ' + self.params.mx3_filepath+filename + ' ' + self.params.mx3running_path+filename)
 				time.sleep(0.5)
 				local_path_and_filename = os.path.join(self.params.local_mx3path,filename)
@@ -301,7 +286,8 @@ class Server(object):
 
 			# write new contents to file
 			# this discard all contents if the file already exist
-			with open(new_path_and_file_name, 'w') as file:
+			# use the linux newline standard
+			with open(new_path_and_file_name, 'w', newline='\n') as file:
 				file.write(file_content)
 	
 	def UploadData(self,filename,delete=False):
@@ -312,11 +298,12 @@ class Server(object):
 			# output folder name
 			filename_out = os.path.splitext(filename)[0]+'.out'
 
+			# TODO: check for existence of folder. Create a unique folder if needed
 			remotedir = self.params.remote_datapath+filename_out
 			ftp_client.mkdir(remotedir)
 			# newssh_client.exec_command('chmod g+r ' + remotedir)
 		except:
-			self.PrintRemote('UploadData: Error in opening ssh connection. Files not uploaded.\n')
+			self.PrintRemote('***** UploadData: Error in opening ssh connection. Files not uploaded. *****\n')
 			return
 
 		localdir = os.path.join(self.params.local_mx3path, filename_out)
@@ -341,7 +328,7 @@ class Server(object):
 		self.PrintRemote('Uploaded results of %s to remote location.\n' % filename)
 		
 	def PrintRemote(self,msg):
-
+		# TODO: Is it possible to print to one central log file? Perhaps the program has to acquire a mutex before writing to log?
 		# append date-time to msg
 		msg = self.AppendDateTime(msg)
 
