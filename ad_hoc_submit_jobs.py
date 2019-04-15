@@ -121,6 +121,8 @@ def submit_jobs_to_NSCC():
 		# filters sh file, and dump them in cache
 		local_sh_path_and_filename = os.path.join(cache_folder_tmp, sh_template_filename)
 		remote_sh_path_and_filename = params.remote_mx3_path + '/' + sh_template_filename
+
+		# FilterFile used \n as newline character
 		Server.FilterFile(sh_replacement_dict, os.path.join(params.local_path, sh_template_filename), local_sh_path_and_filename)
 
 		# copies sh file to remote location
