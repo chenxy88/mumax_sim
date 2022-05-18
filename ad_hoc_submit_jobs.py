@@ -60,8 +60,11 @@ def submit_jobs_to_NSCC():
 		print('No .mx3 files found in %s...\n' % params.local_path)
 		return
 
+	# sh file should be kept in the same directory as the json file
+	local_sh_path = os.path.split(params_path_and_filename)[0]
+
 	# open local_mx3path and find all the sh files
-	sh_file_list = [file for file in os.listdir(params.local_path) if file.endswith('.sh')]
+	sh_file_list = [file for file in os.listdir(local_sh_path) if file.endswith('.sh')]
 
 	# there should be only one sh template file
 	assert (len(sh_file_list) == 1)
@@ -122,8 +125,8 @@ def submit_jobs_to_NSCC():
 		local_sh_path_and_filename = os.path.join(cache_folder_tmp, sh_template_filename)
 		remote_sh_path_and_filename = params.remote_mx3_path + '/' + sh_template_filename
 
-		# FilterFile used \n as newline character
-		Server.FilterFile(sh_replacement_dict, os.path.join(params.local_path, sh_template_filename), local_sh_path_and_filename)
+		# FilterFile use \n as newline character
+		Server.FilterFile(sh_replacement_dict, os.path.join(local_sh_path, sh_template_filename), local_sh_path_and_filename)
 
 		# copies sh file to remote location
 		ftp_client.put(local_sh_path_and_filename, remote_sh_path_and_filename)
